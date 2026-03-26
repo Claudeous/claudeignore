@@ -30,14 +30,7 @@ func repoRoot() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func gitIgnoredPaths(root string) ([]string, error) {
-	cmd := exec.Command("git", "status", "--ignored=traditional", "--porcelain")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git status failed: %w", err)
-	}
-
+func parseIgnoredOutput(out []byte) []string {
 	var paths []string
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
@@ -50,7 +43,36 @@ func gitIgnoredPaths(root string) ([]string, error) {
 			paths = append(paths, path)
 		}
 	}
-	return paths, nil
+	return paths
+}
+
+// gitIgnoredPaths returns paths ignored by .gitignore only.
+func gitIgnoredPaths(root string) ([]string, error) {
+	cmd := exec.Command("git", "status", "--ignored=traditional", "--porcelain")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git status failed: %w", err)
+	}
+	return parseIgnoredOutput(out), nil
+}
+
+// allIgnoredPaths returns paths ignored by .gitignore + .claude.ignore combined,
+// using git's own pattern engine via core.excludesFile.
+func allIgnoredPaths(root string) ([]string, error) {
+	claudeignorePath := filepath.Join(root, ".claude.ignore")
+	if _, err := os.Stat(claudeignorePath); os.IsNotExist(err) {
+		return gitIgnoredPaths(root)
+	}
+
+	absPath, _ := filepath.Abs(claudeignorePath)
+	cmd := exec.Command("git", "-c", "core.excludesFile="+absPath, "status", "--ignored=traditional", "--porcelain")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git status failed: %w", err)
+	}
+	return parseIgnoredOutput(out), nil
 }
 
 // --- .claude/.gitignore management ---
@@ -62,7 +84,7 @@ func ensureClaudeGitignore(root string) {
 	gitignorePath := filepath.Join(claudeDir, ".gitignore")
 
 	requiredEntries := []string{
-		".claudeignore.state.json",
+		".claude.ignore.state.json",
 		"settings.local.json",
 	}
 
@@ -190,14 +212,14 @@ func updateSettings(settingsPath string, denyOnly []string) error {
 func computeHash(root string, mode string) string {
 	h := sha256.New()
 	if mode == "manual" {
-		// Manual mode: hash only .claudeignore
-		data, err := os.ReadFile(filepath.Join(root, ".claudeignore"))
+		// Manual mode: hash only .claude.ignore
+		data, err := os.ReadFile(filepath.Join(root, ".claude.ignore"))
 		if err == nil {
 			h.Write(data)
 		}
 	} else {
 		// Gitignore mode: hash config files + git ignored file list
-		for _, name := range []string{".gitignore", ".claudenotignore", ".claudeignore"} {
+		for _, name := range []string{".gitignore", ".claude.unignore", ".claude.ignore"} {
 			data, err := os.ReadFile(filepath.Join(root, name))
 			if err == nil {
 				h.Write(data)
@@ -221,7 +243,7 @@ type stateData struct {
 }
 
 func stateFilePath(root string) string {
-	return filepath.Join(root, ".claude", ".claudeignore.state.json")
+	return filepath.Join(root, ".claude", ".claude.ignore.state.json")
 }
 
 func loadState(root string) stateData {
@@ -319,7 +341,7 @@ func newModel(paths []string, notignore []string) model {
 	for i, p := range paths {
 		items[i] = item{
 			path:    p,
-			checked: !contains(notignore, p), // unchecked = in .claudenotignore
+			checked: !contains(notignore, p), // unchecked = in .claude.unignore
 		}
 	}
 
@@ -483,7 +505,7 @@ type modeModel struct {
 
 var modeItems = []modeItem{
 	{"gitignore", "From .gitignore (recommended)"},
-	{"manual", "Manual (.claudeignore only)"},
+	{"manual", "Manual (.claude.ignore only)"},
 }
 
 func (m modeModel) Init() tea.Cmd { return nil }
@@ -560,16 +582,16 @@ func cmdInit() {
 	}
 	mode := mFinal.chosen
 
-	claudeignorePath := filepath.Join(root, ".claudeignore")
+	claudeignorePath := filepath.Join(root, ".claude.ignore")
 
 	if mode == "manual" {
-		// Create .claudeignore if it doesn't exist
+		// Create .claude.ignore if it doesn't exist
 		if _, err := os.Stat(claudeignorePath); os.IsNotExist(err) {
 			writeLines(claudeignorePath,
-				"# .claudeignore — Paths to block Claude from reading\n"+
-					"# One path per line (relative to repo root). Supports exact paths only.",
+				"# .claude.ignore — Paths to block Claude from reading\n"+
+					"# Same syntax as .gitignore (globs, wildcards, etc.)",
 				nil)
-			fmt.Println("Created .claudeignore")
+			fmt.Println("Created .claude.ignore")
 		}
 
 		// Save state with mode
@@ -583,7 +605,7 @@ func cmdInit() {
 
 		fmt.Println()
 		fmt.Println("Manual mode enabled.")
-		fmt.Println("Edit .claudeignore then run 'claudeignore sync'.")
+		fmt.Println("Edit .claude.ignore then run 'claudeignore sync'.")
 	} else {
 		// Gitignore mode — existing flow
 		paths, err := gitIgnoredPaths(root)
@@ -597,8 +619,8 @@ func cmdInit() {
 			return
 		}
 
-		// Load existing .claudenotignore for pre-selection
-		notignorePath := filepath.Join(root, ".claudenotignore")
+		// Load existing .claude.unignore for pre-selection
+		notignorePath := filepath.Join(root, ".claude.unignore")
 		notignore := readLines(notignorePath)
 
 		// Run TUI
@@ -615,7 +637,7 @@ func cmdInit() {
 			return
 		}
 
-		// Collect unchecked items → .claudenotignore
+		// Collect unchecked items → .claude.unignore
 		var allowed []string
 		for _, it := range final.items {
 			if !it.checked {
@@ -624,23 +646,23 @@ func cmdInit() {
 		}
 
 		err = writeLines(notignorePath,
-			"# .claudenotignore — Paths from .gitignore that Claude CAN read\n"+
+			"# .claude.unignore — Paths from .gitignore that Claude CAN read\n"+
 				"# Generated by 'claudeignore init'. Edit manually or re-run init.",
 			allowed)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error writing .claudenotignore:", err)
+			fmt.Fprintln(os.Stderr, "Error writing .claude.unignore:", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Saved %d allowed path(s) to .claudenotignore\n", len(allowed))
+		fmt.Printf("Saved %d allowed path(s) to .claude.unignore\n", len(allowed))
 
-		// Create .claudeignore if it doesn't exist
+		// Create .claude.ignore if it doesn't exist
 		if _, err := os.Stat(claudeignorePath); os.IsNotExist(err) {
 			writeLines(claudeignorePath,
-				"# .claudeignore — Extra paths to block Claude from reading\n"+
+				"# .claude.ignore — Extra paths to block Claude from reading\n"+
 					"# Add tracked files that Claude should not access.",
 				nil)
-			fmt.Println("Created .claudeignore")
+			fmt.Println("Created .claude.ignore")
 		}
 
 		// Auto-sync
@@ -687,34 +709,33 @@ func cmdSyncWithMode(mode string, dryRun bool) {
 	var deny []string
 
 	if mode == "manual" {
-		// Manual mode: read only .claudeignore
-		extra := readLines(filepath.Join(root, ".claudeignore"))
-		for _, p := range extra {
+		// Manual mode: resolve .claude.ignore patterns via git, exclude .gitignore matches
+		allPaths, err := allIgnoredPaths(root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		gitPaths, _ := gitIgnoredPaths(root)
+
+		for _, p := range allPaths {
 			n := normalize(p)
-			if !contains(deny, n) {
+			if !contains(gitPaths, p) && !contains(deny, n) {
 				deny = append(deny, n)
 			}
 		}
 	} else {
-		// Gitignore mode: (git_ignored - claudenotignore) + claudeignore
-		paths, err := gitIgnoredPaths(root)
+		// Gitignore mode: (git_ignored + claudeignore resolved) - claudenotignore
+		paths, err := allIgnoredPaths(root)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
 
-		notignore := readLines(filepath.Join(root, ".claudenotignore"))
-		extra := readLines(filepath.Join(root, ".claudeignore"))
+		notignore := readLines(filepath.Join(root, ".claude.unignore"))
 
 		for _, p := range paths {
 			if !contains(notignore, p) {
 				deny = append(deny, normalize(p))
-			}
-		}
-		for _, p := range extra {
-			n := normalize(p)
-			if !contains(deny, n) {
-				deny = append(deny, n)
 			}
 		}
 	}
@@ -812,24 +833,20 @@ func cmdCheck() {
 			// Find new unprotected files
 			var expected []string
 			if mode == "manual" {
-				extra := readLines(filepath.Join(root, ".claudeignore"))
-				for _, p := range extra {
-					expected = append(expected, normalize(p))
+				allPaths, _ := allIgnoredPaths(root)
+				gitPaths, _ := gitIgnoredPaths(root)
+				for _, p := range allPaths {
+					n := normalize(p)
+					if !contains(gitPaths, p) && !contains(expected, n) {
+						expected = append(expected, n)
+					}
 				}
 			} else {
-				paths, _ := gitIgnoredPaths(root)
-				notignore := readLines(filepath.Join(root, ".claudenotignore"))
-				extra := readLines(filepath.Join(root, ".claudeignore"))
-
+				paths, _ := allIgnoredPaths(root)
+				notignore := readLines(filepath.Join(root, ".claude.unignore"))
 				for _, p := range paths {
 					if !contains(notignore, p) {
 						expected = append(expected, normalize(p))
-					}
-				}
-				for _, p := range extra {
-					n := normalize(p)
-					if !contains(expected, n) {
-						expected = append(expected, n)
 					}
 				}
 			}
@@ -1106,22 +1123,22 @@ func cmdStatus() {
 	}
 	fmt.Printf("Mode: %s\n", mode)
 
-	// .claudenotignore (only relevant in gitignore mode)
+	// .claude.unignore (only relevant in gitignore mode)
 	if mode != "manual" {
-		notignore := readLines(filepath.Join(root, ".claudenotignore"))
+		notignore := readLines(filepath.Join(root, ".claude.unignore"))
 		if notignore != nil {
-			fmt.Printf(".claudenotignore: %d path(s) (allowed)\n", len(notignore))
+			fmt.Printf(".claude.unignore: %d path(s) (allowed)\n", len(notignore))
 		} else {
-			fmt.Println(".claudenotignore: not found")
+			fmt.Println(".claude.unignore: not found")
 		}
 	}
 
-	// .claudeignore
-	extra := readLines(filepath.Join(root, ".claudeignore"))
+	// .claude.ignore
+	extra := readLines(filepath.Join(root, ".claude.ignore"))
 	if extra != nil {
-		fmt.Printf(".claudeignore: %d path(s) (extra deny)\n", len(extra))
+		fmt.Printf(".claude.ignore: %d path(s) (extra deny)\n", len(extra))
 	} else {
-		fmt.Println(".claudeignore: not found")
+		fmt.Println(".claude.ignore: not found")
 	}
 
 	// Sync
@@ -1170,8 +1187,8 @@ func cmdHelp() {
 	fmt.Println(`claudeignore — Sync gitignore rules to Claude Code sandbox
 
 Modes:
-  gitignore (default)   sandbox = git_ignored - .claudenotignore + .claudeignore
-  manual                sandbox = .claudeignore only
+  gitignore (default)   sandbox = git_ignored - .claude.unignore + .claude.ignore
+  manual                sandbox = .claude.ignore only
 
 Usage:
   claudeignore init              Interactive setup (choose mode, configure, install hooks)
@@ -1187,6 +1204,8 @@ Usage:
 Setup on a new project:
   1. claudeignore init     # Choose mode, configure, hooks auto-installed
   2. Restart Claude Code
+
+Pattern syntax: same as .gitignore (see git-scm.com/docs/gitignore)
 
 Requirements: git`)
 }
