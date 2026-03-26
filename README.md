@@ -4,11 +4,11 @@ Sync gitignore rules to Claude Code sandbox, blocking file access via **all** to
 
 ## Why?
 
-Claude Code's sandbox only blocks Bash subprocesses, not built-in tools like Read/Write/Edit. This tool provides complete protection by combining:
+Claude Code has no built-in way to block access to gitignored files (`.env`, secrets, etc.). This tool fills that gap by blocking **all** access paths:
 
-- **Sandbox `denyRead`** for Bash commands (`cat`, `grep`, etc.)
-- **PreToolUse hook (`guard`)** for built-in tools (Read, Write, Edit, Grep, Glob)
-- **UserPromptSubmit hook (`check`)** for change detection and restart reminders
+- **Sandbox `denyRead`** — OS-level filesystem restriction that blocks any process spawned by Bash (`cat`, `grep`, scripts, etc.)
+- **PreToolUse hook (`guard`)** — blocks built-in tools (Read, Write, Edit, Grep, Glob)
+- **UserPromptSubmit hook (`check`)** — detects rule changes and reminds to sync & restart
 
 ## Modes
 
@@ -16,25 +16,23 @@ Claude Code's sandbox only blocks Bash subprocesses, not built-in tools like Rea
 
 Derives the deny list from your `.gitignore`, with overrides:
 
-```
-sandbox denyOnly = .gitignore - .claudenotignore + .claudeignore
-```
+$$\text{denyList} = \text{.gitignore} - \text{.claude.unignore} + \text{.claude.ignore}$$
 
 | File               | Role                             | Example                          |
 |--------------------|----------------------------------|----------------------------------|
 | `.gitignore`       | Base deny list (from git)        | `.env`, `node_modules`, `vendor` |
-| `.claudenotignore` | Subtract: Claude CAN read these  | `vendor`, `node_modules`         |
-| `.claudeignore`    | Add: extra deny beyond gitignore | `config/dev.secrets.php`         |
+| `.claude.unignore` | Subtract: Claude CAN read these  | `vendor`, `node_modules`         |
+| `.claude.ignore`   | Add: extra deny beyond gitignore | `config/dev.secrets.php`         |
 
 ### Manual mode
 
-Uses `.claudeignore` only — one path per line, no git dependency for the deny list:
+Uses `.claude.ignore` only — no `.gitignore` dependency for the deny list:
 
-```
-sandbox denyOnly = .claudeignore
-```
+$$\text{denyList} = \text{.claude.ignore}$$
 
 Choose the mode during `claudeignore init`.
+
+Both `.claude.ignore` and `.claude.unignore` use [gitignore pattern syntax](https://git-scm.com/docs/gitignore#_pattern_format) (`*`, `**`, `!`, etc.).
 
 ## Install
 
@@ -60,16 +58,16 @@ That's it — `init` runs `sync` and `install-hook` automatically.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `claudeignore` | Interactive menu with status |
-| `claudeignore init` | Choose mode + configure + install hooks |
-| `claudeignore sync` | Apply rules to sandbox |
-| `claudeignore sync --dry-run` | Preview deny list without writing |
-| `claudeignore check` | Check for changes (used by hook) |
-| `claudeignore guard` | Block tool access (used by hook) |
-| `claudeignore install-hook` | Install hooks in project |
-| `claudeignore status` | Show current state |
+| Command                       | Description                             |
+|-------------------------------|-----------------------------------------|
+| `claudeignore`                | Interactive menu with status            |
+| `claudeignore init`           | Choose mode + configure + install hooks |
+| `claudeignore sync`           | Apply rules to sandbox                  |
+| `claudeignore sync --dry-run` | Preview deny list without writing       |
+| `claudeignore check`          | Check for changes (used by hook)        |
+| `claudeignore guard`          | Block tool access (used by hook)        |
+| `claudeignore install-hook`   | Install hooks in project                |
+| `claudeignore status`         | Show current state                      |
 
 ## How it works
 
