@@ -1,0 +1,42 @@
+version: 2
+
+project_name: claudeignore
+
+builds:
+  - main: .
+    binary: claudeignore
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - repository:
+      owner: Claudeous
+      name: homebrew-tools
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/Claudeous/claudeignore"
+    description: "Sync gitignore rules to Claude Code sandbox"
+    license: "MIT"
+    install: |
+      bin.install "claudeignore"
+    test: |
+      system "#{bin}/claudeignore", "version"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
