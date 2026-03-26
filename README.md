@@ -66,7 +66,7 @@ That's it — `init` runs `sync` and `install-hook` automatically.
 | `claudeignore sync --dry-run` | Preview deny list without writing       |
 | `claudeignore check`          | Check for changes (used by hook)        |
 | `claudeignore guard`          | Block tool access (used by hook)        |
-| `claudeignore install-hook`   | Install hooks in project                |
+| `claudeignore install-hook`   | Install hooks (user + project scope)    |
 | `claudeignore status`         | Show current state                      |
 
 ## How it works
@@ -75,7 +75,7 @@ That's it — `init` runs `sync` and `install-hook` automatically.
 2. `sync` computes the deny list based on the chosen mode, writes to `settings.local.json`.
 3. `guard` hook intercepts Read/Write/Edit/Grep/Glob and blocks access to denied paths.
 4. `check` hook alerts on every prompt if rules are out of sync or restart is needed.
-5. `install-hook` wires everything into `.claude/settings.json`.
+5. `install-hook` installs hooks in two scopes: **user** (`~/.claude/settings.json`, direct commands) and **project** (`.claude/settings.json`, safe wrapper with `which` check for teammates without the binary).
 
 ## Change detection
 
