@@ -18,7 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const version = "2.0.0"
+const version = "0.0.1-alpha"
 
 // --- Git helpers ---
 
