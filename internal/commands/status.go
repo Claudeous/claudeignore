@@ -52,16 +52,18 @@ func Status(root string, version string, showSupport bool) error {
 
 	// Config files
 	if mode != "manual" {
-		notignore := config.ReadLines(filepath.Join(root, ".claude.unignore"))
-		if notignore != nil {
+		unignorePath := filepath.Join(root, ".claude.unignore")
+		if _, err := os.Stat(unignorePath); err == nil {
+			notignore := config.ReadLines(unignorePath)
 			fmt.Println(statusLine(".claude.unignore", iconOK, fmt.Sprintf("%d path(s) allowed", len(notignore)), okStyle))
 		} else {
 			fmt.Println(statusLine(".claude.unignore", iconWarn, "not found", warnStyle))
 		}
 	}
 
-	extra := config.ReadLines(filepath.Join(root, ".claude.ignore"))
-	if extra != nil {
+	ignorePath := filepath.Join(root, ".claude.ignore")
+	if _, err := os.Stat(ignorePath); err == nil {
+		extra := config.ReadLines(ignorePath)
 		fmt.Println(statusLine(".claude.ignore", iconOK, fmt.Sprintf("%d path(s) extra deny", len(extra)), okStyle))
 	} else {
 		fmt.Println(statusLine(".claude.ignore", iconWarn, "not found", warnStyle))
