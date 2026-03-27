@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/claudeous/claudeignore/internal/config"
+	"github.com/claudeous/claudeignore/internal/support"
 )
 
 var (
@@ -135,6 +136,9 @@ func Status(root string, version string) error {
 	} else {
 		fmt.Println(statusLine("check", iconFail, checkDetail, errStyle))
 	}
+
+	fmt.Println()
+	fmt.Println(support.StyledMessage())
 
 	return nil
 }
