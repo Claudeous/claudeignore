@@ -131,6 +131,16 @@ The guard fails open by design: if it can't determine the repo root, read settin
 
 Run `claudeignore status`. It shows the current mode, sync state, number of denied entries, and whether hooks are installed. If everything says "up to date" and hooks show "user + project", you're fully protected.
 
+## Support
+
+claudeignore is free and open source. If it's useful to you, consider supporting development:
+
+- [GitHub Sponsors](https://github.com/sponsors/Claudeous)
+- [Buy Me a Coffee](https://buymeacoffee.com/claudeous)
+- [Ko-fi](https://ko-fi.com/claudeous)
+
+Every contribution helps maintain and improve this tool.
+
 ## Requirements
 
 - `git`
