@@ -8,6 +8,7 @@ import (
 
 	"github.com/claudeous/claudeignore/internal/config"
 	"github.com/claudeous/claudeignore/internal/git"
+	"github.com/claudeous/claudeignore/internal/support"
 )
 
 // Sync reads the mode from state and syncs the deny list.
@@ -110,6 +111,10 @@ func SyncWithMode(root string, mode string, dryRun bool) error {
 	}
 	fmt.Println()
 	fmt.Println("Restart Claude Code to apply changes.")
+	if support.ShouldShow() {
+		fmt.Println()
+		fmt.Println(support.StyledMessage())
+	}
 	return nil
 }
 

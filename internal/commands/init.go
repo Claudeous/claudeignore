@@ -10,6 +10,7 @@ import (
 
 	"github.com/claudeous/claudeignore/internal/config"
 	"github.com/claudeous/claudeignore/internal/git"
+	"github.com/claudeous/claudeignore/internal/support"
 	"github.com/claudeous/claudeignore/internal/tui"
 )
 
@@ -110,5 +111,10 @@ func Init(root string) error {
 	}
 
 	fmt.Println()
-	return InstallHook(root)
+	if err := InstallHook(root); err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println(support.StyledMessage())
+	return nil
 }
