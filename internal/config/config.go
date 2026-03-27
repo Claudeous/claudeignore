@@ -25,7 +25,7 @@ type FilesystemSettings struct {
 
 // LoadSettings reads and parses a Claude Code settings JSON file.
 func LoadSettings(path string) (*Settings, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // paths are from known config locations
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,9 @@ func ParseSettings(data []byte) (*Settings, error) {
 	// Preserve unknown keys
 	for k, v := range raw {
 		var val interface{}
-		json.Unmarshal(v, &val)
+		if err := json.Unmarshal(v, &val); err != nil {
+			continue
+		}
 		s.Extra[k] = val
 	}
 
@@ -114,7 +116,7 @@ func SaveSettings(path string, s *Settings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0644)
+	return os.WriteFile(path, append(out, '\n'), 0600)
 }
 
 // UpdateSettingsFile reads a settings file, updates denyRead, and writes it back.
@@ -132,7 +134,7 @@ func UpdateSettingsFile(settingsPath string, deny []string) error {
 
 // ReadLines reads non-empty, non-comment lines from a file.
 func ReadLines(path string) []string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // paths are from known config locations
 	if err != nil {
 		return nil
 	}
@@ -156,7 +158,7 @@ func WriteLines(path string, header string, lines []string) error {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0644)
+	return os.WriteFile(path, []byte(b.String()), 0600)
 }
 
 // Normalize strips leading and trailing slashes from a path.
@@ -212,7 +214,7 @@ func PathMatchesSet(set map[string]struct{}, item string) bool {
 // with state.json ignored (local-only file).
 func EnsureClaudeGitignore(root string) error {
 	dir := filepath.Join(root, ".claude", "claudeignore")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("cannot create %s: %w", dir, err)
 	}
 
@@ -220,7 +222,7 @@ func EnsureClaudeGitignore(root string) error {
 	requiredEntries := []string{"state.json"}
 
 	var existing []string
-	if data, err := os.ReadFile(gitignorePath); err == nil {
+	if data, err := os.ReadFile(gitignorePath); err == nil { //nolint:gosec // known path
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" {
@@ -243,7 +245,7 @@ func EnsureClaudeGitignore(root string) error {
 
 	if changed {
 		content := strings.Join(existing, "\n") + "\n"
-		if err := os.WriteFile(gitignorePath, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(content), 0600); err != nil {
 			return fmt.Errorf("cannot write %s: %w", gitignorePath, err)
 		}
 	}

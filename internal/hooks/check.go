@@ -148,10 +148,10 @@ func FormatCheckMessage(r *CheckResult) string {
 func writeFileList(b *strings.Builder, files []string) {
 	for i, f := range files {
 		if i >= maxFileListShow {
-			b.WriteString(fmt.Sprintf("  ... and %d more\n", len(files)-maxFileListShow))
+			fmt.Fprintf(b, "  ... and %d more\n", len(files)-maxFileListShow)
 			break
 		}
-		b.WriteString(fmt.Sprintf("  - %s\n", f))
+		fmt.Fprintf(b, "  - %s\n", f)
 	}
 	b.WriteString("\n")
 }
@@ -163,7 +163,7 @@ func GetClaudeStartTime() int64 {
 		if pid <= 1 {
 			break
 		}
-		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "ppid=,lstart=,comm=").Output()
+		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "ppid=,lstart=,comm=").Output() //nolint:gosec // pid is from os.Getppid
 		if err != nil {
 			break
 		}

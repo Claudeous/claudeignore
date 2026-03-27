@@ -72,7 +72,7 @@ func AllIgnoredPaths(root string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "-c", "core.excludesFile="+absPath, "status", "--ignored=traditional", "--porcelain")
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.excludesFile="+absPath, "status", "--ignored=traditional", "--porcelain") //nolint:gosec // absPath is a resolved local file path
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {

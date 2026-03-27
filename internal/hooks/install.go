@@ -50,10 +50,10 @@ func CheckInstallScriptPath(root string) string {
 // WriteCheckInstallScript creates the check-install script on disk.
 func WriteCheckInstallScript(root string) error {
 	scriptPath := CheckInstallScriptPath(root)
-	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0750); err != nil {
 		return fmt.Errorf("cannot create .claude/claudeignore directory: %w", err)
 	}
-	if err := os.WriteFile(scriptPath, []byte(CheckInstallScript), 0755); err != nil {
+	if err := os.WriteFile(scriptPath, []byte(CheckInstallScript), 0750); err != nil {
 		return fmt.Errorf("cannot write check-install script: %w", err)
 	}
 	return nil
@@ -78,7 +78,7 @@ func ProjectHooksConfig() map[string]interface{} {
 
 // InstallHooksToFile writes hook configuration to a settings file, preserving other keys.
 func InstallHooksToFile(path string, hooks map[string]interface{}) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return fmt.Errorf("cannot create directory for %s: %w", path, err)
 	}
 

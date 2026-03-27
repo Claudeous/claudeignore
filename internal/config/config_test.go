@@ -134,7 +134,9 @@ func TestReadLines(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join(dir, tt.name+".txt")
-			os.WriteFile(path, []byte(tt.content), 0644)
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
 
 			got := ReadLines(path)
 
@@ -233,7 +235,9 @@ func TestSettings_ParseAndMarshal(t *testing.T) {
 
 		// Parse back
 		var m map[string]interface{}
-		json.Unmarshal(out, &m)
+		if err := json.Unmarshal(out, &m); err != nil {
+			t.Fatal(err)
+		}
 		if m["custom"] != "value" {
 			t.Error("custom key not preserved in roundtrip")
 		}
@@ -269,16 +273,23 @@ func TestUpdateSettingsFile(t *testing.T) {
 
 	t.Run("preserves existing keys", func(t *testing.T) {
 		path := filepath.Join(dir, "existing.json")
-		os.WriteFile(path, []byte(`{"permissions":{"allow":["Read"]}}`), 0644)
+		if err := os.WriteFile(path, []byte(`{"permissions":{"allow":["Read"]}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		err := UpdateSettingsFile(path, []string{".env"})
 		if err != nil {
 			t.Fatalf("UpdateSettingsFile error: %v", err)
 		}
 
-		data, _ := os.ReadFile(path)
+		data, err2 := os.ReadFile(path)
+		if err2 != nil {
+			t.Fatal(err2)
+		}
 		var m map[string]interface{}
-		json.Unmarshal(data, &m)
+		if err3 := json.Unmarshal(data, &m); err3 != nil {
+			t.Fatal(err3)
+		}
 		if m["permissions"] == nil {
 			t.Error("existing 'permissions' key was not preserved")
 		}
@@ -304,8 +315,12 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 
 	t.Run("does not duplicate entries", func(t *testing.T) {
 		dir := t.TempDir()
-		EnsureClaudeGitignore(dir)
-		EnsureClaudeGitignore(dir)
+		if err := EnsureClaudeGitignore(dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := EnsureClaudeGitignore(dir); err != nil {
+			t.Fatal(err)
+		}
 
 		path := filepath.Join(dir, ".claude", "claudeignore", ".gitignore")
 		data, _ := os.ReadFile(path)
@@ -323,10 +338,16 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 	t.Run("preserves existing entries", func(t *testing.T) {
 		dir := t.TempDir()
 		ciDir := filepath.Join(dir, ".claude", "claudeignore")
-		os.MkdirAll(ciDir, 0755)
-		os.WriteFile(filepath.Join(ciDir, ".gitignore"), []byte("custom-entry\n"), 0644)
+		if err := os.MkdirAll(ciDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ciDir, ".gitignore"), []byte("custom-entry\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-		EnsureClaudeGitignore(dir)
+		if err := EnsureClaudeGitignore(dir); err != nil {
+			t.Fatal(err)
+		}
 
 		data, _ := os.ReadFile(filepath.Join(ciDir, ".gitignore"))
 		content := string(data)

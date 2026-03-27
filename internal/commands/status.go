@@ -22,8 +22,7 @@ var (
 	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // green
 	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // yellow
 	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // red
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	valStyle   = lipgloss.NewStyle().Bold(true)
+	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 const (
@@ -155,7 +154,7 @@ func checkHookHealth(hook, root string) (ok bool, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, binary, hook)
+	cmd := exec.CommandContext(ctx, binary, hook) //nolint:gosec // binary path comes from LookPath
 	cmd.Dir = root
 
 	if hook == "guard" {
