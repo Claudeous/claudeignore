@@ -8,4 +8,6 @@ var (
 	CursorStyle    = lipgloss.NewStyle().Bold(true)
 	DimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	HeaderStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	SupportStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	SupportURLStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 )
