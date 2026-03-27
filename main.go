@@ -46,7 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := commands.Status(root, version); err != nil {
+	if err := commands.Status(root, version, false); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
@@ -124,7 +124,7 @@ func runCommand(cmd string) error {
 	case "install-hook":
 		return commands.InstallHook(root)
 	case "status":
-		return commands.Status(root, version)
+		return commands.Status(root, version, true)
 	case "version":
 		fmt.Printf("claudeignore v%s\n", version)
 		return nil
