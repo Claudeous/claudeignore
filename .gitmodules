@@ -1,0 +1,8 @@
+[submodule "tools/homebrew-tools"]
+	path = tools/homebrew-tools
+	url = https://github.com/Claudeous/homebrew-tools.git
+	ignore = all
+[submodule "tools/scoop-tools"]
+	path = tools/scoop-tools
+	url = https://github.com/Claudeous/scoop-tools.git`
+	ignore = all
