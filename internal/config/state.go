@@ -42,20 +42,20 @@ func SaveState(root string, s StateData) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(StateFilePath(root), append(out, '\n'), 0644)
+	return os.WriteFile(StateFilePath(root), append(out, '\n'), 0600)
 }
 
 // ComputeHash computes a SHA-256 hash of the current config state.
 func ComputeHash(root string, mode string) string {
 	h := sha256.New()
 	if mode == "manual" {
-		data, err := os.ReadFile(filepath.Join(root, ".claude.ignore"))
+		data, err := os.ReadFile(filepath.Join(root, ".claude.ignore")) //nolint:gosec // known config path
 		if err == nil {
 			h.Write(data)
 		}
 	} else {
 		for _, name := range []string{".gitignore", ".claude.unignore", ".claude.ignore"} {
-			data, err := os.ReadFile(filepath.Join(root, name))
+			data, err := os.ReadFile(filepath.Join(root, name)) //nolint:gosec // names are hardcoded config files
 			if err == nil {
 				h.Write(data)
 			}
