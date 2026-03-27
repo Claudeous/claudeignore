@@ -36,16 +36,39 @@ Both `.claude.ignore` and `.claude.unignore` use [gitignore pattern syntax](http
 
 ## Install
 
+### macOS (Homebrew)
+
 ```bash
 brew tap claudeous/tools
 brew install claudeignore
 ```
 
-Or with Go:
+### macOS / Linux (curl)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Claudeous/claudeignore/main/install.sh | sh
+```
+
+Installs to `/usr/local/bin` (may prompt for sudo).
+
+### Windows (Scoop)
+
+```powershell
+scoop bucket add claudeous https://github.com/Claudeous/scoop-tools
+scoop install claudeignore
+```
+
+### Windows (manual)
+
+Download the latest `.zip` from [Releases](https://github.com/Claudeous/claudeignore/releases), extract `claudeignore.exe`, and add its folder to your `PATH`.
+
+### All platforms (Go)
 
 ```bash
 go install github.com/Claudeous/claudeignore@latest
 ```
+
+Requires Go 1.21+. The binary is placed in `$GOPATH/bin` (must be in your `PATH`).
 
 ## Setup on a project
 

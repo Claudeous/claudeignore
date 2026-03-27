@@ -62,7 +62,7 @@ Hooks are installed in two places:
 
 ### State tracking
 
-`.claude/.claude.ignore.state.json` stores mode, SHA-256 hash of config files, sync timestamp, and newly denied files. Restart detection compares sync timestamp against Claude Code process start time (via PPID walk).
+`.claude/claudeignore/state.json` stores mode, SHA-256 hash of config files, sync timestamp, and newly denied files. Restart detection compares sync timestamp against Claude Code process start time (via PPID walk).
 
 ### Key patterns
 
@@ -79,7 +79,8 @@ Hooks are installed in two places:
 | `.claude.ignore` | Extra paths to block beyond gitignore |
 | `.claude/settings.local.json` | Generated sandbox deny list |
 | `.claude/settings.json` | Project-scope hooks (install warning for teammates) |
-| `.claude/.claude.ignore.state.json` | Sync state (hash, timestamp, mode) |
+| `.claude/claudeignore/state.json` | Sync state (hash, timestamp, mode) |
+| `.claude/claudeignore/check-install.sh` | Project hook script (warns teammates) |
 | `~/.claude/settings.json` | User-scope hooks (actual guard + check commands) |
 
 ## Gotchas
