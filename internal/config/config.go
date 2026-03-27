@@ -175,24 +175,49 @@ func NewPathSet(paths []string) map[string]struct{} {
 	return s
 }
 
-// PathSetContains checks if a normalized path is in the set.
+// PathSetContains checks if a normalized path is in the set (exact match only).
 func PathSetContains(set map[string]struct{}, item string) bool {
 	_, ok := set[Normalize(item)]
 	return ok
 }
 
-// EnsureClaudeGitignore ensures .claude/.gitignore contains local-only file entries.
-func EnsureClaudeGitignore(root string) error {
-	claudeDir := filepath.Join(root, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return fmt.Errorf("cannot create .claude directory: %w", err)
-	}
-	gitignorePath := filepath.Join(claudeDir, ".gitignore")
+// PathMatchesSet checks if a path is matched by the set, supporting both:
+// - exact match: "file.txt" matches "file.txt"
+// - prefix match: "pdf/Client1.pdf" matches if "pdf" is in the set
+//
+// This is used for .claude.unignore where directory entries (e.g. "pdf/")
+// should match all files under that directory.
+func PathMatchesSet(set map[string]struct{}, item string) bool {
+	norm := Normalize(item)
 
-	requiredEntries := []string{
-		".claude.ignore.state.json",
-		"settings.local.json",
+	// Exact match
+	if _, ok := set[norm]; ok {
+		return true
 	}
+
+	// Check if any ancestor directory is in the set
+	for i := 0; i < len(norm); i++ {
+		if norm[i] == '/' {
+			prefix := norm[:i]
+			if _, ok := set[prefix]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// EnsureClaudeGitignore ensures .claude/claudeignore/.gitignore exists
+// with state.json ignored (local-only file).
+func EnsureClaudeGitignore(root string) error {
+	dir := filepath.Join(root, ".claude", "claudeignore")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("cannot create %s: %w", dir, err)
+	}
+
+	gitignorePath := filepath.Join(dir, ".gitignore")
+	requiredEntries := []string{"state.json"}
 
 	var existing []string
 	if data, err := os.ReadFile(gitignorePath); err == nil {
@@ -219,7 +244,7 @@ func EnsureClaudeGitignore(root string) error {
 	if changed {
 		content := strings.Join(existing, "\n") + "\n"
 		if err := os.WriteFile(gitignorePath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("cannot write .claude/.gitignore: %w", err)
+			return fmt.Errorf("cannot write %s: %w", gitignorePath, err)
 		}
 	}
 	return nil

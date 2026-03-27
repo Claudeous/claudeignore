@@ -35,13 +35,32 @@ func UserHooksConfig() map[string]interface{} {
 	}
 }
 
+// CheckInstallScript is the content of the project hook script
+// that warns teammates who don't have claudeignore installed.
+const CheckInstallScript = `#!/bin/sh
+which claudeignore >/dev/null 2>&1 && exit 0
+echo '{"continue":true,"suppressOutput":false,"systemMessage":"\u26a0\ufe0f This project uses claudeignore to protect sensitive files. Install it: brew tap claudeous/tools \u0026\u0026 brew install claudeignore — https://github.com/Claudeous/claudeignore"}'
+`
+
+// CheckInstallScriptPath returns the path to the check-install script.
+func CheckInstallScriptPath(root string) string {
+	return filepath.Join(root, ".claude", "claudeignore", "check-install.sh")
+}
+
+// WriteCheckInstallScript creates the check-install script on disk.
+func WriteCheckInstallScript(root string) error {
+	scriptPath := CheckInstallScriptPath(root)
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+		return fmt.Errorf("cannot create .claude/claudeignore directory: %w", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(CheckInstallScript), 0755); err != nil {
+		return fmt.Errorf("cannot write check-install script: %w", err)
+	}
+	return nil
+}
+
 // ProjectHooksConfig returns the hook configuration for project-scope settings.
 func ProjectHooksConfig() map[string]interface{} {
-	checkScript := `which claudeignore >/dev/null 2>&1 && exit 0; echo '{"continue":true,"suppressOutput":false,"systemMessage":"` +
-		`\u26a0\ufe0f This project uses claudeignore to protect sensitive files. ` +
-		`Install it: brew tap claudeous/tools \u0026\u0026 brew install claudeignore ` +
-		`— https://github.com/Claudeous/claudeignore"}'`
-
 	return map[string]interface{}{
 		"UserPromptSubmit": []interface{}{
 			map[string]interface{}{
@@ -49,7 +68,7 @@ func ProjectHooksConfig() map[string]interface{} {
 				"hooks": []interface{}{
 					map[string]interface{}{
 						"type":    "command",
-						"command": checkScript,
+						"command": ".claude/claudeignore/check-install.sh",
 					},
 				},
 			},
