@@ -1,5 +1,9 @@
 # claudeignore
 
+[![CI](https://github.com/Claudeous/claudeignore/actions/workflows/ci.yml/badge.svg)](https://github.com/Claudeous/claudeignore/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Claudeous/claudeignore/actions/workflows/codeql.yml/badge.svg)](https://github.com/Claudeous/claudeignore/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Claudeous/claudeignore/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Claudeous/claudeignore)
+
 Sync gitignore rules to Claude Code sandbox, blocking file access via **all** tools (Read, Bash, Grep, etc.).
 
 ## Why?

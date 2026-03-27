@@ -44,6 +44,9 @@ scoops:
     description: "Sync gitignore rules to Claude Code sandbox"
     license: "GPL-3.0"
 
+sboms:
+  - artifacts: archive
+
 checksum:
   name_template: "checksums.txt"
 
