@@ -245,7 +245,7 @@ func EnsureClaudeGitignore(root string) error {
 
 	if changed {
 		content := strings.Join(existing, "\n") + "\n"
-		if err := os.WriteFile(gitignorePath, []byte(content), 0600); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(content), 0600); err != nil { //nolint:gosec // gitignorePath is constructed from filepath.Join
 			return fmt.Errorf("cannot write %s: %w", gitignorePath, err)
 		}
 	}

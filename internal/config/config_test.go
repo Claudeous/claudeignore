@@ -134,7 +134,7 @@ func TestReadLines(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join(dir, tt.name+".txt")
-			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+			if err := os.WriteFile(path, []byte(tt.content), 0600); err != nil {
 				t.Fatal(err)
 			}
 
@@ -169,7 +169,7 @@ func TestWriteLines(t *testing.T) {
 		t.Fatalf("WriteLines error: %v", err)
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // test file path
 	if err != nil {
 		t.Fatalf("ReadFile error: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestUpdateSettingsFile(t *testing.T) {
 
 	t.Run("preserves existing keys", func(t *testing.T) {
 		path := filepath.Join(dir, "existing.json")
-		if err := os.WriteFile(path, []byte(`{"permissions":{"allow":["Read"]}}`), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(`{"permissions":{"allow":["Read"]}}`), 0600); err != nil {
 			t.Fatal(err)
 		}
 
@@ -338,10 +338,10 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 	t.Run("preserves existing entries", func(t *testing.T) {
 		dir := t.TempDir()
 		ciDir := filepath.Join(dir, ".claude", "claudeignore")
-		if err := os.MkdirAll(ciDir, 0755); err != nil {
+		if err := os.MkdirAll(ciDir, 0750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(ciDir, ".gitignore"), []byte("custom-entry\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(ciDir, ".gitignore"), []byte("custom-entry\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 

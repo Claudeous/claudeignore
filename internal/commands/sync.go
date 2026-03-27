@@ -66,7 +66,7 @@ func SyncWithMode(root string, mode string, dryRun bool) error {
 	}
 
 	claudeDir := filepath.Join(root, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	if err := os.MkdirAll(claudeDir, 0750); err != nil {
 		return fmt.Errorf("cannot create .claude directory: %w", err)
 	}
 	if err := config.EnsureClaudeGitignore(root); err != nil {

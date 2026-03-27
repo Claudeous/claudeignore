@@ -35,7 +35,9 @@ func TestInstallHooksToFile(t *testing.T) {
 	t.Run("preserves existing keys", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "settings.json")
-		os.WriteFile(path, []byte(`{"permissions":{"allow":["Read"]}}`), 0644)
+		if err := os.WriteFile(path, []byte(`{"permissions":{"allow":["Read"]}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
 
 		err := InstallHooksToFile(path, UserHooksConfig())
 		if err != nil {
@@ -44,7 +46,9 @@ func TestInstallHooksToFile(t *testing.T) {
 
 		data, _ := os.ReadFile(path)
 		var m map[string]interface{}
-		json.Unmarshal(data, &m)
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
 
 		if m["permissions"] == nil {
 			t.Error("existing 'permissions' key was not preserved")
@@ -57,7 +61,9 @@ func TestInstallHooksToFile(t *testing.T) {
 	t.Run("overwrites invalid JSON gracefully", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "bad.json")
-		os.WriteFile(path, []byte(`not valid json`), 0644)
+		if err := os.WriteFile(path, []byte(`not valid json`), 0600); err != nil {
+			t.Fatal(err)
+		}
 
 		err := InstallHooksToFile(path, UserHooksConfig())
 		if err != nil {

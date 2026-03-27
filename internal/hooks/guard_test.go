@@ -129,7 +129,9 @@ func TestCheckPathBlocked_SymlinkTraversal(t *testing.T) {
 	// Create a file outside root
 	outsideDir := t.TempDir()
 	secretFile := filepath.Join(outsideDir, "secret.txt")
-	os.WriteFile(secretFile, []byte("secret"), 0644)
+	if err := os.WriteFile(secretFile, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create symlink inside root pointing outside
 	linkPath := filepath.Join(root, "link_to_secret")
