@@ -12,6 +12,7 @@ import (
 	"github.com/claudeous/claudeignore/internal/commands"
 	"github.com/claudeous/claudeignore/internal/git"
 	"github.com/claudeous/claudeignore/internal/hooks"
+	"github.com/claudeous/claudeignore/internal/support"
 	"github.com/claudeous/claudeignore/internal/tui"
 )
 
@@ -26,6 +27,7 @@ var menuItems = []tui.MenuItem{
 	{Name: "install-hook", Desc: "Install all hooks in .claude/settings.json"},
 	{Name: "help", Desc: "Show help"},
 	{Name: "version", Desc: "Show version"},
+	{Name: "\U0001F49C support", Desc: "Open sponsor page in browser"},
 }
 
 func main() {
@@ -59,7 +61,13 @@ func main() {
 	final := result.(tui.MenuModel)
 	if final.Chosen != "" {
 		fmt.Println()
-		if err := runCommand(final.Chosen); err != nil {
+		if final.Chosen == "\U0001F49C support" {
+			if err := support.OpenBrowser(); err != nil {
+				fmt.Fprintln(os.Stderr, "Could not open browser:", err)
+			} else {
+				fmt.Println("Opening sponsor page...")
+			}
+		} else if err := runCommand(final.Chosen); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
@@ -67,7 +75,7 @@ func main() {
 }
 
 func runCommand(cmd string) error {
-	needsRoot := cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "version"
+	needsRoot := cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "version" && cmd != "support"
 	var root string
 	if needsRoot {
 		var err error
@@ -119,6 +127,12 @@ func runCommand(cmd string) error {
 		return commands.Status(root, version)
 	case "version":
 		fmt.Printf("claudeignore v%s\n", version)
+		return nil
+	case "support":
+		if err := support.OpenBrowser(); err != nil {
+			return fmt.Errorf("could not open browser: %w", err)
+		}
+		fmt.Println("Opening sponsor page...")
 		return nil
 	case "help", "--help", "-h":
 		commands.Help()

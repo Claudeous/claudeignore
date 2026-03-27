@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/claudeous/claudeignore/internal/support"
 )
 
 // MenuItem represents a menu option.
@@ -80,6 +82,9 @@ func (m MenuModel) View() string {
 
 	b.WriteString("\n")
 	b.WriteString(DimStyle.Render("  enter = select   esc = quit"))
+	b.WriteString("\n")
+	b.WriteString(SupportStyle.Render("  \U0001F49C Support development \u2192 ") +
+		SupportURLStyle.Render(support.SupportURL))
 	b.WriteString("\n")
 
 	return b.String()
