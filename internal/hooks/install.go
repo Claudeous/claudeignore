@@ -53,7 +53,7 @@ func WriteCheckInstallScript(root string) error {
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0750); err != nil {
 		return fmt.Errorf("cannot create .claude/claudeignore directory: %w", err)
 	}
-	if err := os.WriteFile(scriptPath, []byte(CheckInstallScript), 0750); err != nil {
+	if err := os.WriteFile(scriptPath, []byte(CheckInstallScript), 0750); err != nil { //nolint:gosec // shell script must be executable
 		return fmt.Errorf("cannot write check-install script: %w", err)
 	}
 	return nil
@@ -98,7 +98,7 @@ func InstallHooksToFile(path string, hooks map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0644)
+	return os.WriteFile(path, append(out, '\n'), 0600)
 }
 
 // OutputHookMessage prints a JSON hook message to stdout.

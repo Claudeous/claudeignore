@@ -282,7 +282,7 @@ func TestUpdateSettingsFile(t *testing.T) {
 			t.Fatalf("UpdateSettingsFile error: %v", err)
 		}
 
-		data, err2 := os.ReadFile(path)
+		data, err2 := os.ReadFile(path) //nolint:gosec // test file path
 		if err2 != nil {
 			t.Fatal(err2)
 		}
@@ -304,7 +304,7 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 			t.Fatalf("EnsureClaudeGitignore error: %v", err)
 		}
 
-		data, err := os.ReadFile(filepath.Join(dir, ".claude", "claudeignore", ".gitignore"))
+		data, err := os.ReadFile(filepath.Join(dir, ".claude", "claudeignore", ".gitignore")) //nolint:gosec // test path
 		if err != nil {
 			t.Fatalf("ReadFile error: %v", err)
 		}
@@ -323,7 +323,7 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 		}
 
 		path := filepath.Join(dir, ".claude", "claudeignore", ".gitignore")
-		data, _ := os.ReadFile(path)
+		data, _ := os.ReadFile(path) //nolint:gosec // test path
 		lines := 0
 		for _, line := range splitLines(string(data)) {
 			if line == "state.json" {
