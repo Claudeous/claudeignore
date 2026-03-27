@@ -14,9 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.21"
+          go-version: "1.23"
 
       - name: Run tests
         run: go test ./... -race -v
@@ -29,12 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.21"
+          go-version: "1.23"
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
 
@@ -43,11 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.21"
+          go-version: "1.23"
 
       - name: Run govulncheck
         uses: golang/govulncheck-action@v1
         with:
-          go-version-input: "1.21"
+          go-version-input: "1.23"
