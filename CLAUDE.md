@@ -9,13 +9,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
-go build -o claudeignore .       # build binary
+make build                       # build binary to bin/claudeignore
 go run . <cmd>                   # run without building (e.g. go run . status)
-./claudeignore                   # interactive menu
-./claudeignore init              # setup wizard
-./claudeignore sync --dry-run    # preview deny list
+./bin/claudeignore               # interactive menu
+./bin/claudeignore init          # setup wizard
+./bin/claudeignore sync --dry-run # preview deny list
 make test                        # run tests with race detector
 make vet                         # run go vet
+make lint                        # run golangci-lint
 make cover                       # generate coverage report
 ```
 
