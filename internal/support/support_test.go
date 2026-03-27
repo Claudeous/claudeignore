@@ -1,6 +1,7 @@
 package support
 
 import (
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -48,10 +49,10 @@ func TestShouldShow_Distribution(t *testing.T) {
 // Task 3: BrowserCommand
 
 func TestBrowserCommand_Darwin(t *testing.T) {
-	cmd, args := BrowserCommand("https://example.com")
 	if runtime.GOOS != "darwin" {
 		t.Skip("darwin-only test")
 	}
+	cmd, args := BrowserCommand("https://example.com")
 	if cmd != "open" {
 		t.Errorf("darwin: expected command %q, got %q", "open", cmd)
 	}
@@ -112,5 +113,17 @@ func TestBrowserCommand_CorrectForCurrentOS(t *testing.T) {
 		if len(args) != 1 || args[0] != url {
 			t.Errorf("linux: unexpected args %v", args)
 		}
+	}
+}
+
+// Task 4: OpenBrowser
+
+func TestOpenBrowser(t *testing.T) {
+	browserCmd, _ := BrowserCommand(SupportURL)
+	if _, err := exec.LookPath(browserCmd); err != nil {
+		t.Skipf("browser command %q not found in PATH: %v", browserCmd, err)
+	}
+	if err := OpenBrowser(); err != nil {
+		t.Errorf("OpenBrowser() returned unexpected error: %v", err)
 	}
 }
