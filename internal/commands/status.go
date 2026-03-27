@@ -37,7 +37,7 @@ func statusLine(label, icon, value string, style lipgloss.Style) string {
 }
 
 // Status prints the current state of claudeignore.
-func Status(root string, version string) error {
+func Status(root string, version string, showSupport bool) error {
 	fmt.Println(titleStyle.Render(fmt.Sprintf("claudeignore v%s", version)))
 	fmt.Println(dimStyle.Render(root))
 	fmt.Println()
@@ -137,8 +137,10 @@ func Status(root string, version string) error {
 		fmt.Println(statusLine("check", iconFail, checkDetail, errStyle))
 	}
 
-	fmt.Println()
-	fmt.Println(support.StyledMessage())
+	if showSupport {
+		fmt.Println()
+		fmt.Println(support.StyledMessage())
+	}
 
 	return nil
 }
