@@ -1,7 +1,7 @@
 package support
 
 import (
-	"math/rand/v2"
+	"math/rand"
 	"os/exec"
 	"runtime"
 
@@ -25,7 +25,7 @@ func StyledMessage() string {
 
 // ShouldShow returns true with roughly 20% probability (1-in-5 chance).
 func ShouldShow() bool {
-	return rand.IntN(5) == 0
+	return rand.Intn(5) == 0
 }
 
 // BrowserCommand returns the OS-appropriate command and args to open a URL.
