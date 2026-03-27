@@ -25,7 +25,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/Claudeous/claudeignore"
     description: "Sync gitignore rules to Claude Code sandbox"
-    license: "MIT"
+    license: "GPL-3.0"
     install: |
       bin.install "claudeignore"
     test: |
