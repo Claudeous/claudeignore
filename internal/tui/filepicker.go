@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/claudeous/claudeignore/internal/config"
+	"github.com/claudeous/claudeignore/internal/git"
 )
 
 const expandThreshold = 20
@@ -21,9 +22,10 @@ type FileChild struct {
 
 // FileGroup represents a directory group or the root files group.
 type FileGroup struct {
-	Name     string // directory name or "" for root files
-	Children []FileChild
-	Expanded bool
+	Name            string // directory name or "" for root files
+	Children        []FileChild
+	Expanded        bool
+	DirectlyIgnored bool // true if the directory itself is gitignored (not just its contents)
 }
 
 // FilePickerModel is the TUI for selecting which files to block.
@@ -45,7 +47,8 @@ type visibleRow struct {
 }
 
 // NewFilePickerModel creates a file picker with given paths and unignore list.
-func NewFilePickerModel(paths []string, notignore []string) FilePickerModel {
+// root is the git repo root, used to detect directly ignored directories.
+func NewFilePickerModel(paths []string, notignore []string, root string) FilePickerModel {
 	ti := textinput.New()
 	ti.Placeholder = "Type to filter..."
 	ti.Focus()
@@ -99,10 +102,16 @@ func NewFilePickerModel(paths []string, notignore []string) FilePickerModel {
 				Checked: !config.PathMatchesSet(notignoreSet, f),
 			}
 		}
+		dirIgnored := git.IsDirectoryIgnored(root, dir)
+		expanded := len(files) < expandThreshold
+		if dirIgnored {
+			expanded = false // directly ignored dirs start collapsed
+		}
 		groups = append(groups, FileGroup{
-			Name:     dir,
-			Children: children,
-			Expanded: len(files) < expandThreshold,
+			Name:            dir,
+			Children:        children,
+			Expanded:        expanded,
+			DirectlyIgnored: dirIgnored,
 		})
 	}
 
@@ -365,15 +374,19 @@ func (m FilePickerModel) View() string {
 					}
 				}
 
-				var header string
+				var checkbox, label string
 				if checked == len(g.Children) {
-					header = CheckedStyle.Render(fmt.Sprintf("%s %s/ (%d files)", arrow, g.Name, len(g.Children)))
+					checkbox = CheckedStyle.Render("[x]")
+					label = CheckedStyle.Render(fmt.Sprintf(" %s %s/ (%d files)", arrow, g.Name, len(g.Children)))
 				} else if checked == 0 {
-					header = UncheckedStyle.Render(fmt.Sprintf("%s %s/ (%d files)", arrow, g.Name, len(g.Children)))
+					checkbox = UncheckedStyle.Render("[ ]")
+					label = UncheckedStyle.Render(fmt.Sprintf(" %s %s/ (%d files)", arrow, g.Name, len(g.Children)))
 				} else {
-					header = DimStyle.Render(fmt.Sprintf("%s %s/ (%d/%d blocked)", arrow, g.Name, checked, len(g.Children)))
+					checkbox = PartialStyle.Render("[\u25CB]")
+					label = PartialStyle.Render(fmt.Sprintf(" %s %s/ (%d/%d blocked)", arrow, g.Name, checked, len(g.Children)))
 				}
 
+				header := checkbox + label
 				if vi == m.cursor {
 					b.WriteString(CursorStyle.Render(cursor) + header)
 				} else {

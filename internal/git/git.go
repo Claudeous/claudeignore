@@ -81,6 +81,18 @@ func AllIgnoredPaths(root string) ([]string, error) {
 	return ParseIgnoredOutput(out), nil
 }
 
+// IsDirectoryIgnored checks if a directory is directly ignored by git
+// (as opposed to containing individually ignored files).
+func IsDirectoryIgnored(root, dir string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "check-ignore", "-q", dir) //nolint:gosec // dir comes from parsed git output
+	cmd.Dir = root
+	err := cmd.Run()
+	return err == nil // exit 0 = ignored
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
