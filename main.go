@@ -16,7 +16,7 @@ import (
 	"github.com/claudeous/claudeignore/internal/tui"
 )
 
-const version = "0.0.1-alpha"
+var version = "dev"
 
 var menuItems = []tui.MenuItem{
 	{Name: "init", Desc: "Interactive TUI to select what Claude can read"},
