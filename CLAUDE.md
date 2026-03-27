@@ -14,9 +14,10 @@ go run . <cmd>                   # run without building (e.g. go run . status)
 ./claudeignore                   # interactive menu
 ./claudeignore init              # setup wizard
 ./claudeignore sync --dry-run    # preview deny list
+make test                        # run tests with race detector
+make vet                         # run go vet
+make cover                       # generate coverage report
 ```
-
-No test suite or linter is configured.
 
 ### Release
 
@@ -26,7 +27,21 @@ git tag v0.x.x && git push origin v0.x.x   # triggers GoReleaser via GitHub Acti
 
 ## Architecture
 
-Single-file Go application (`main.go`, ~1400 lines). No internal packages.
+```
+main.go                     # Entry point, CLI routing
+internal/
+  git/git.go                # Git helpers (repoRoot, ignored paths)
+  config/config.go          # Settings types, file helpers, path sets
+  config/state.go           # State persistence, hash computation
+  hooks/guard.go            # PreToolUse hook (path blocking)
+  hooks/check.go            # UserPromptSubmit hook (sync detection)
+  hooks/install.go          # Hook config generation, installation
+  tui/styles.go             # Shared lipgloss styles
+  tui/filepicker.go         # File selection TUI
+  tui/modeselector.go       # Mode selection TUI
+  tui/menu.go               # Main menu TUI
+  commands/                  # CLI command implementations
+```
 
 ### Three protection layers
 
