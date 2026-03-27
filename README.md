@@ -133,13 +133,13 @@ Run `claudeignore status`. It shows the current mode, sync state, number of deni
 
 ## Support
 
-claudeignore is free and open source. If it's useful to you, consider supporting development:
+claudeignore is free and open source, built and maintained by [Claudeous](https://github.com/Claudeous) — an independent developer creating tools for the Claude Code ecosystem, making AI-assisted development safer, one tool at a time.
+
+If this tool is useful to you, consider supporting development:
 
 - [GitHub Sponsors](https://github.com/sponsors/Claudeous)
-- [Buy Me a Coffee](https://buymeacoffee.com/claudeous)
-- [Ko-fi](https://ko-fi.com/claudeous)
 
-Every contribution helps maintain and improve this tool.
+Your sponsorship helps maintain claudeignore, respond to issues, and build more tools that make AI-assisted development safer and smoother.
 
 ## Requirements
 
