@@ -86,6 +86,28 @@ The `check` hook detects two situations:
 
 Restart detection works by comparing the sync timestamp with the Claude Code process start time (via PPID walk).
 
+## FAQ
+
+**Why does each dev need to run `sync` locally?**
+
+The source rules (`.gitignore`, `.claude.ignore`, `.claude.unignore`) are committed and shared via git. But the generated deny list in `settings.local.json` depends on what files actually exist on disk, which varies per machine. Each dev runs `claudeignore sync` to resolve rules against their local state — similar to how `node_modules` is local but `package-lock.json` is shared.
+
+**What happens for teammates who don't have claudeignore?**
+
+The project hook (`.claude/settings.json`) runs a check script that detects if the binary is missing and shows an install reminder. No protection is enforced without the binary — the hook is advisory only.
+
+**Why is a restart required after sync?**
+
+The sandbox `denyRead` list is loaded once when Claude Code starts. After `sync` updates it, Bash-level protection only takes effect after restart. The `guard` hook protects Read/Write/Edit/Grep/Glob immediately — only Bash access requires the restart.
+
+**Does the guard block every access attempt?**
+
+The guard fails open by design: if it can't determine the repo root, read settings, or parse input, it allows the request. This prevents the tool from ever locking a user out due to a bug or misconfiguration.
+
+**How do I know if I'm protected?**
+
+Run `claudeignore status`. It shows the current mode, sync state, number of denied entries, and whether hooks are installed. If everything says "up to date" and hooks show "user + project", you're fully protected.
+
 ## Requirements
 
 - `git`

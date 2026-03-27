@@ -82,12 +82,7 @@ func Init(root string) error {
 			return nil
 		}
 
-		var allowed []string
-		for _, it := range final.Items {
-			if !it.Checked {
-				allowed = append(allowed, it.Path)
-			}
-		}
+		allowed := final.AllowedPaths()
 
 		if err := config.WriteLines(notignorePath,
 			"# .claude.unignore — Paths from .gitignore that Claude CAN read\n"+

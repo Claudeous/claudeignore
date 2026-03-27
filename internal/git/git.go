@@ -81,6 +81,64 @@ func AllIgnoredPaths(root string) ([]string, error) {
 	return ParseIgnoredOutput(out), nil
 }
 
+// CollapsedPath represents either a single file or a collapsed directory.
+type CollapsedPath struct {
+	Path     string   // the display path (e.g. "pdf" for a collapsed dir, ".env" for a file)
+	Count    int      // number of files collapsed (0 = single file)
+	Children []string // original child paths when collapsed
+}
+
+// IsDir returns true if this entry is a collapsed directory.
+func (c CollapsedPath) IsDir() bool {
+	return c.Count > 0
+}
+
+const collapseThreshold = 5
+
+// CollapsePaths groups paths by their first directory component.
+// Directories with more than collapseThreshold files are collapsed into a single entry.
+func CollapsePaths(paths []string) []CollapsedPath {
+	groups := make(map[string][]string)
+	var order []string // preserve first-seen order of directories
+	var rootFiles []string
+
+	for _, p := range paths {
+		idx := strings.IndexByte(p, '/')
+		if idx == -1 {
+			rootFiles = append(rootFiles, p)
+			continue
+		}
+		dir := p[:idx]
+		if _, seen := groups[dir]; !seen {
+			order = append(order, dir)
+		}
+		groups[dir] = append(groups[dir], p)
+	}
+
+	var result []CollapsedPath
+
+	for _, f := range rootFiles {
+		result = append(result, CollapsedPath{Path: f})
+	}
+
+	for _, dir := range order {
+		files := groups[dir]
+		if len(files) > collapseThreshold {
+			result = append(result, CollapsedPath{
+				Path:     dir,
+				Count:    len(files),
+				Children: files,
+			})
+		} else {
+			for _, f := range files {
+				result = append(result, CollapsedPath{Path: f})
+			}
+		}
+	}
+
+	return result
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil

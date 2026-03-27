@@ -9,12 +9,28 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/claudeous/claudeignore/internal/config"
+	"github.com/claudeous/claudeignore/internal/git"
 )
 
-// FileItem represents a file entry in the picker.
+// FileItem represents a file or collapsed directory entry in the picker.
 type FileItem struct {
-	Path    string
-	Checked bool // checked = blocked for Claude
+	Path     string
+	Checked  bool     // checked = blocked for Claude
+	Count    int      // >0 means collapsed directory
+	Children []string // original paths when collapsed
+}
+
+// IsDir returns true if this item is a collapsed directory.
+func (f FileItem) IsDir() bool {
+	return f.Count > 0
+}
+
+// DisplayPath returns the path to show in the TUI.
+func (f FileItem) DisplayPath() string {
+	if f.IsDir() {
+		return fmt.Sprintf("%s/ (%d files)", f.Path, f.Count)
+	}
+	return f.Path
 }
 
 // FilePickerModel is the TUI for selecting which files to block.
@@ -30,6 +46,7 @@ type FilePickerModel struct {
 }
 
 // NewFilePickerModel creates a file picker with given paths and unignore list.
+// Paths are collapsed by directory when a directory has many files.
 func NewFilePickerModel(paths []string, notignore []string) FilePickerModel {
 	ti := textinput.New()
 	ti.Placeholder = "Type to filter..."
@@ -38,11 +55,28 @@ func NewFilePickerModel(paths []string, notignore []string) FilePickerModel {
 
 	notignoreSet := config.NewPathSet(notignore)
 
-	items := make([]FileItem, len(paths))
-	for i, p := range paths {
+	collapsed := git.CollapsePaths(paths)
+	items := make([]FileItem, len(collapsed))
+	for i, cp := range collapsed {
+		checked := true
+		if cp.IsDir() {
+			// A collapsed dir is unchecked only if ALL children are in the unignore list
+			for _, child := range cp.Children {
+				if !config.PathSetContains(notignoreSet, child) {
+					checked = true
+					break
+				}
+				checked = false
+			}
+		} else {
+			checked = !config.PathSetContains(notignoreSet, cp.Path)
+		}
+
 		items[i] = FileItem{
-			Path:    p,
-			Checked: !config.PathSetContains(notignoreSet, p),
+			Path:     cp.Path,
+			Checked:  checked,
+			Count:    cp.Count,
+			Children: cp.Children,
 		}
 	}
 
@@ -53,6 +87,23 @@ func NewFilePickerModel(paths []string, notignore []string) FilePickerModel {
 	}
 	m.applyFilter()
 	return m
+}
+
+// AllowedPaths returns the list of paths the user unchecked (Claude CAN read).
+// For collapsed directories, returns the directory pattern (e.g. "pdf/")
+// instead of expanding all children — .claude.unignore uses gitignore syntax.
+func (m FilePickerModel) AllowedPaths() []string {
+	var allowed []string
+	for _, it := range m.Items {
+		if !it.Checked {
+			if it.IsDir() {
+				allowed = append(allowed, it.Path+"/")
+			} else {
+				allowed = append(allowed, it.Path)
+			}
+		}
+	}
+	return allowed
 }
 
 func (m *FilePickerModel) applyFilter() {
@@ -155,11 +206,12 @@ func (m FilePickerModel) View() string {
 				cursor = "> "
 			}
 
+			display := it.DisplayPath()
 			var line string
 			if it.Checked {
-				line = CheckedStyle.Render("[x] " + it.Path)
+				line = CheckedStyle.Render("[x] " + display)
 			} else {
-				line = UncheckedStyle.Render("[ ] " + it.Path)
+				line = UncheckedStyle.Render("[ ] " + display)
 			}
 
 			if vi == m.cursor {
@@ -173,17 +225,22 @@ func (m FilePickerModel) View() string {
 		}
 	}
 
+	// Footer: count actual files (expanding collapsed dirs)
 	blocked := 0
 	allowed := 0
 	for _, it := range m.Items {
+		n := 1
+		if it.IsDir() {
+			n = it.Count
+		}
 		if it.Checked {
-			blocked++
+			blocked += n
 		} else {
-			allowed++
+			allowed += n
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(DimStyle.Render(fmt.Sprintf("  %d blocked, %d allowed, %d total", blocked, allowed, len(m.Items))))
+	b.WriteString(DimStyle.Render(fmt.Sprintf("  %d blocked, %d allowed, %d total", blocked, allowed, blocked+allowed)))
 	b.WriteString("\n")
 
 	return b.String()

@@ -28,12 +28,16 @@ func InstallHook(root string) error {
 	fmt.Println("  - PreToolUse: claudeignore guard")
 	fmt.Println("  - UserPromptSubmit: claudeignore check")
 
+	if err := hooks.WriteCheckInstallScript(root); err != nil {
+		return fmt.Errorf("error writing check-install script: %w", err)
+	}
+
 	projectSettingsPath := filepath.Join(root, ".claude", "settings.json")
 	if err := hooks.InstallHooksToFile(projectSettingsPath, hooks.ProjectHooksConfig()); err != nil {
 		return fmt.Errorf("error writing project hooks: %w", err)
 	}
 	fmt.Println("Project hooks installed in .claude/settings.json")
-	fmt.Println("  - UserPromptSubmit: install check (warns teammates)")
+	fmt.Println("  - UserPromptSubmit: .claude/claudeignore/check-install.sh")
 
 	fmt.Println()
 	fmt.Println("Restart Claude Code to apply.")

@@ -50,7 +50,7 @@ func SyncWithMode(root string, mode string, dryRun bool) error {
 		notignoreSet := config.NewPathSet(notignore)
 
 		for _, p := range paths {
-			if !config.PathSetContains(notignoreSet, p) {
+			if !config.PathMatchesSet(notignoreSet, p) {
 				deny = append(deny, config.Normalize(p))
 			}
 		}
@@ -112,3 +112,4 @@ func SyncWithMode(root string, mode string, dryRun bool) error {
 	fmt.Println("Restart Claude Code to apply changes.")
 	return nil
 }
+

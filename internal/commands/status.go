@@ -1,82 +1,184 @@
 package commands
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/claudeous/claudeignore/internal/config"
 )
 
+var (
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Width(20)
+	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // green
+	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // yellow
+	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // red
+	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	valStyle   = lipgloss.NewStyle().Bold(true)
+)
+
+const (
+	iconOK   = "\u2714" // checkmark
+	iconWarn = "\u25CB" // circle
+	iconFail = "\u2718" // cross
+)
+
+func statusLine(label, icon, value string, style lipgloss.Style) string {
+	return labelStyle.Render(label) + style.Render(icon+" "+value)
+}
+
 // Status prints the current state of claudeignore.
 func Status(root string, version string) error {
-	fmt.Printf("claudeignore v%s\n", version)
-	fmt.Printf("Project: %s\n\n", root)
+	fmt.Println(titleStyle.Render(fmt.Sprintf("claudeignore v%s", version)))
+	fmt.Println(dimStyle.Render(root))
+	fmt.Println()
 
 	state := config.LoadState(root)
 	mode := state.Mode
 	if mode == "" {
 		mode = "gitignore"
 	}
-	fmt.Printf("Mode: %s\n", mode)
 
+	// Mode
+	fmt.Println(statusLine("Mode", iconOK, mode, okStyle))
+
+	// Config files
 	if mode != "manual" {
 		notignore := config.ReadLines(filepath.Join(root, ".claude.unignore"))
 		if notignore != nil {
-			fmt.Printf(".claude.unignore: %d path(s) (allowed)\n", len(notignore))
+			fmt.Println(statusLine(".claude.unignore", iconOK, fmt.Sprintf("%d path(s) allowed", len(notignore)), okStyle))
 		} else {
-			fmt.Println(".claude.unignore: not found")
+			fmt.Println(statusLine(".claude.unignore", iconWarn, "not found", warnStyle))
 		}
 	}
 
 	extra := config.ReadLines(filepath.Join(root, ".claude.ignore"))
 	if extra != nil {
-		fmt.Printf(".claude.ignore: %d path(s) (extra deny)\n", len(extra))
+		fmt.Println(statusLine(".claude.ignore", iconOK, fmt.Sprintf("%d path(s) extra deny", len(extra)), okStyle))
 	} else {
-		fmt.Println(".claude.ignore: not found")
+		fmt.Println(statusLine(".claude.ignore", iconWarn, "not found", warnStyle))
 	}
 
+	// Sync
 	if state.Hash == "" {
-		fmt.Println("Sync: never run")
+		fmt.Println(statusLine("Sync", iconFail, "never run", errStyle))
 	} else {
 		current := config.ComputeHash(root, mode)
 		if current == state.Hash {
-			fmt.Println("Sync: up to date")
+			fmt.Println(statusLine("Sync", iconOK, "up to date", okStyle))
 		} else {
-			fmt.Println("Sync: out of date (run 'claudeignore sync')")
+			fmt.Println(statusLine("Sync", iconFail, "out of date — run 'claudeignore sync'", errStyle))
 		}
 	}
 
+	// Sandbox
 	settingsPath := filepath.Join(root, ".claude", "settings.local.json")
 	if settings, err := config.LoadSettings(settingsPath); err == nil {
 		denyList := settings.GetDenyList()
-		fmt.Printf("Sandbox denyRead: %d entry(ies)\n", len(denyList))
+		fmt.Println(statusLine("Sandbox denyRead", iconOK, fmt.Sprintf("%d entry(ies)", len(denyList)), okStyle))
 	} else {
-		fmt.Println("Sandbox: not configured")
+		fmt.Println(statusLine("Sandbox denyRead", iconFail, "not configured", errStyle))
 	}
 
+	// Hooks
 	home, _ := os.UserHomeDir()
 	userHook := false
 	if home != "" {
 		if data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err == nil {
-			userHook = strings.Contains(string(data), "claudeignore check")
+			userHook = strings.Contains(string(data), "claudeignore")
 		}
 	}
 	projectHook := false
 	if data, err := os.ReadFile(filepath.Join(root, ".claude", "settings.json")); err == nil {
-		projectHook = strings.Contains(string(data), "claudeignore check")
+		projectHook = strings.Contains(string(data), "claudeignore")
 	}
 
 	if userHook && projectHook {
-		fmt.Println("Hooks: user + project")
+		fmt.Println(statusLine("Hooks", iconOK, "user + project", okStyle))
 	} else if userHook {
-		fmt.Println("Hooks: user only")
+		fmt.Println(statusLine("Hooks", iconWarn, "user only (run 'claudeignore install-hook')", warnStyle))
 	} else if projectHook {
-		fmt.Println("Hooks: project only")
+		fmt.Println(statusLine("Hooks", iconWarn, "project only (run 'claudeignore install-hook')", warnStyle))
 	} else {
-		fmt.Println("Hooks: not installed (run 'claudeignore install-hook')")
+		fmt.Println(statusLine("Hooks", iconFail, "not installed — run 'claudeignore install-hook'", errStyle))
+	}
+
+	// Binary & hook health checks
+	fmt.Println()
+	fmt.Println(titleStyle.Render("Hook health"))
+
+	binaryPath, err := exec.LookPath("claudeignore")
+	if err != nil {
+		fmt.Println(statusLine("Binary", iconFail, "not found in PATH", errStyle))
+	} else {
+		fmt.Println(statusLine("Binary", iconOK, binaryPath, okStyle))
+	}
+
+	guardOK, guardDetail := checkHookHealth("guard", root)
+	if guardOK {
+		fmt.Println(statusLine("guard", iconOK, guardDetail, okStyle))
+	} else {
+		fmt.Println(statusLine("guard", iconFail, guardDetail, errStyle))
+	}
+
+	checkOK, checkDetail := checkHookHealth("check", root)
+	if checkOK {
+		fmt.Println(statusLine("check", iconOK, checkDetail, okStyle))
+	} else {
+		fmt.Println(statusLine("check", iconFail, checkDetail, errStyle))
 	}
 
 	return nil
+}
+
+// checkHookHealth runs a hook command as a subprocess and reports if it works.
+func checkHookHealth(hook, root string) (ok bool, detail string) {
+	binary, err := exec.LookPath("claudeignore")
+	if err != nil {
+		return false, "binary not in PATH"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binary, hook)
+	cmd.Dir = root
+
+	if hook == "guard" {
+		// Pipe a harmless test input — a path that won't match any deny entry
+		testInput := `{"tool_name":"Read","tool_input":{"file_path":"__claudeignore_healthcheck__"}}`
+		cmd.Stdin = bytes.NewBufferString(testInput)
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return false, "timed out (5s)"
+	}
+
+	if err != nil {
+		exitErr, isExit := err.(*exec.ExitError)
+		if isExit && hook == "guard" && exitErr.ExitCode() == 2 {
+			// Exit 2 = blocked, means guard is working
+			return true, "ok (test path was blocked)"
+		}
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return false, fmt.Sprintf("exit %d — %s", exitErr.ExitCode(), errMsg)
+	}
+
+	return true, "ok"
 }

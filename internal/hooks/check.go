@@ -19,6 +19,7 @@ const maxFileListShow = 5
 type CheckResult struct {
 	NeedsSync    bool
 	NeedsRestart bool
+	BenignSync   bool     // sync needed but no new unprotected files
 	NewFiles     []string
 	StateNewDeny []string // from previous sync
 }
@@ -52,9 +53,9 @@ func Check(root string) (*CheckResult, error) {
 		}
 	}
 
-	// No new unprotected files = benign change — don't alert
+	// No new unprotected files and no restart = low-priority sync reminder
 	if result.NeedsSync && len(result.NewFiles) == 0 && !result.NeedsRestart {
-		return nil, nil
+		result.BenignSync = true
 	}
 
 	if !result.NeedsSync && !result.NeedsRestart {
@@ -83,7 +84,7 @@ func findNewUnprotectedFiles(root, mode string) []string {
 		notignore := config.ReadLines(filepath.Join(root, ".claude.unignore"))
 		notignoreSet := config.NewPathSet(notignore)
 		for _, p := range paths {
-			if !config.PathSetContains(notignoreSet, p) {
+			if !config.PathMatchesSet(notignoreSet, p) {
 				expected = append(expected, config.Normalize(p))
 			}
 		}
@@ -111,6 +112,12 @@ func findNewUnprotectedFiles(root, mode string) []string {
 // FormatCheckMessage builds the user-facing alert message.
 func FormatCheckMessage(r *CheckResult) string {
 	var msg strings.Builder
+
+	if r.BenignSync {
+		msg.WriteString("claudeignore: rules changed, run 'claudeignore sync' when convenient.")
+		return msg.String()
+	}
+
 	msg.WriteString("\U0001F6A8 claudeignore: ")
 
 	if r.NeedsSync && r.NeedsRestart {
@@ -132,7 +139,7 @@ func FormatCheckMessage(r *CheckResult) string {
 	if r.NeedsSync {
 		msg.WriteString("Run 'claudeignore sync' then restart Claude Code.")
 	} else {
-		msg.WriteString("Restart Claude Code to apply Bash sandbox protection.\n(Read/Write/Edit are already protected)")
+		msg.WriteString("Restart Claude Code to update Bash sandbox protection.\n(Read/Write/Edit are already protected)")
 	}
 
 	return msg.String()

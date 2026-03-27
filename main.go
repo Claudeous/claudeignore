@@ -85,9 +85,11 @@ func runCommand(cmd string) error {
 		return commands.Init(root)
 	case "sync":
 		dryRun := false
-		for _, arg := range os.Args[2:] {
-			if arg == "--dry-run" {
-				dryRun = true
+		if len(os.Args) > 2 {
+			for _, arg := range os.Args[2:] {
+				if arg == "--dry-run" {
+					dryRun = true
+				}
 			}
 		}
 		return commands.Sync(root, dryRun)
