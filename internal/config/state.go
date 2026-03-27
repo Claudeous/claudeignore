@@ -20,7 +20,7 @@ type StateData struct {
 
 // StateFilePath returns the path to the state file.
 func StateFilePath(root string) string {
-	return filepath.Join(root, ".claude", ".claude.ignore.state.json")
+	return filepath.Join(root, ".claude", "claudeignore", "state.json")
 }
 
 // LoadState reads the state file, returning zero-value on error.

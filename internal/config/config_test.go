@@ -64,6 +64,38 @@ func TestNewPathSet_and_PathSetContains(t *testing.T) {
 	}
 }
 
+func TestPathMatchesSet(t *testing.T) {
+	tests := []struct {
+		name     string
+		paths    []string
+		lookup   string
+		expected bool
+	}{
+		{"exact match", []string{".env"}, ".env", true},
+		{"not found", []string{".env"}, "other.txt", false},
+		{"dir prefix matches nested file", []string{"pdf"}, "pdf/Client1.pdf", true},
+		{"dir prefix with trailing slash", []string{"pdf/"}, "pdf/Client1.pdf", true},
+		{"dir prefix matches deeply nested", []string{"vendor"}, "vendor/github.com/pkg/a.go", true},
+		{"partial dir name does not match", []string{"pdf"}, "pdf2/file.txt", false},
+		{"nested dir prefix", []string{"config/secrets"}, "config/secrets/prod.env", true},
+		{"parent dir only matches children", []string{"config"}, "config/secrets/prod.env", true},
+		{"empty set", nil, "anything", false},
+		{"exact match file in dir", []string{"pdf/specific.pdf"}, "pdf/specific.pdf", true},
+		{"file does not prefix-match sibling", []string{"pdf/a.pdf"}, "pdf/b.pdf", false},
+		{"root file not matched by similar dir", []string{"src"}, "src-old/file.go", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			set := NewPathSet(tt.paths)
+			got := PathMatchesSet(set, tt.lookup)
+			if got != tt.expected {
+				t.Errorf("PathMatchesSet(%v, %q) = %v, want %v", tt.paths, tt.lookup, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestReadLines(t *testing.T) {
 	dir := t.TempDir()
 
@@ -261,49 +293,42 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 			t.Fatalf("EnsureClaudeGitignore error: %v", err)
 		}
 
-		path := filepath.Join(dir, ".claude", ".gitignore")
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(filepath.Join(dir, ".claude", "claudeignore", ".gitignore"))
 		if err != nil {
 			t.Fatalf("ReadFile error: %v", err)
 		}
-
-		content := string(data)
-		if !contains(content, ".claude.ignore.state.json") {
-			t.Error("missing .claude.ignore.state.json entry")
-		}
-		if !contains(content, "settings.local.json") {
-			t.Error("missing settings.local.json entry")
+		if !contains(string(data), "state.json") {
+			t.Error("missing state.json entry")
 		}
 	})
 
 	t.Run("does not duplicate entries", func(t *testing.T) {
 		dir := t.TempDir()
-		// Run twice
 		EnsureClaudeGitignore(dir)
 		EnsureClaudeGitignore(dir)
 
-		path := filepath.Join(dir, ".claude", ".gitignore")
+		path := filepath.Join(dir, ".claude", "claudeignore", ".gitignore")
 		data, _ := os.ReadFile(path)
 		lines := 0
 		for _, line := range splitLines(string(data)) {
-			if line == "settings.local.json" {
+			if line == "state.json" {
 				lines++
 			}
 		}
 		if lines != 1 {
-			t.Errorf("settings.local.json appears %d times, want 1", lines)
+			t.Errorf("state.json appears %d times, want 1", lines)
 		}
 	})
 
 	t.Run("preserves existing entries", func(t *testing.T) {
 		dir := t.TempDir()
-		claudeDir := filepath.Join(dir, ".claude")
-		os.MkdirAll(claudeDir, 0755)
-		os.WriteFile(filepath.Join(claudeDir, ".gitignore"), []byte("custom-entry\n"), 0644)
+		ciDir := filepath.Join(dir, ".claude", "claudeignore")
+		os.MkdirAll(ciDir, 0755)
+		os.WriteFile(filepath.Join(ciDir, ".gitignore"), []byte("custom-entry\n"), 0644)
 
 		EnsureClaudeGitignore(dir)
 
-		data, _ := os.ReadFile(filepath.Join(claudeDir, ".gitignore"))
+		data, _ := os.ReadFile(filepath.Join(ciDir, ".gitignore"))
 		content := string(data)
 		if !contains(content, "custom-entry") {
 			t.Error("existing entry 'custom-entry' was removed")
