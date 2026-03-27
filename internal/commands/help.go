@@ -1,6 +1,10 @@
 package commands
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/claudeous/claudeignore/internal/support"
+)
 
 // Help prints the usage information.
 func Help() {
@@ -28,4 +32,6 @@ Setup on a new project:
 Pattern syntax: same as .gitignore (see git-scm.com/docs/gitignore)
 
 Requirements: git`)
+	fmt.Println()
+	fmt.Println(support.StyledMessage())
 }
