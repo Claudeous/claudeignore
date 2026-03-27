@@ -49,13 +49,13 @@ func SaveState(root string, s StateData) error {
 func ComputeHash(root string, mode string) string {
 	h := sha256.New()
 	if mode == "manual" {
-		data, err := os.ReadFile(filepath.Join(root, ".claude.ignore")) //nolint:gosec // known config path
+		data, err := os.ReadFile(filepath.Join(root, ".claude.ignore"))
 		if err == nil {
 			h.Write(data)
 		}
 	} else {
 		for _, name := range []string{".gitignore", ".claude.unignore", ".claude.ignore"} {
-			data, err := os.ReadFile(filepath.Join(root, name)) //nolint:gosec // names are hardcoded config files
+			data, err := os.ReadFile(filepath.Join(root, name))
 			if err == nil {
 				h.Write(data)
 			}

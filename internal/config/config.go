@@ -25,7 +25,7 @@ type FilesystemSettings struct {
 
 // LoadSettings reads and parses a Claude Code settings JSON file.
 func LoadSettings(path string) (*Settings, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // paths are from known config locations
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func UpdateSettingsFile(settingsPath string, deny []string) error {
 
 // ReadLines reads non-empty, non-comment lines from a file.
 func ReadLines(path string) []string {
-	data, err := os.ReadFile(path) //nolint:gosec // paths are from known config locations
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -222,8 +222,7 @@ func EnsureClaudeGitignore(root string) error {
 	requiredEntries := []string{"state.json"}
 
 	var existing []string
-	if data, err := os.ReadFile(gitignorePath); err == nil { //nolint:gosec // known path
-		for _, line := range strings.Split(string(data), "\n") {
+	if data, err := os.ReadFile(gitignorePath); err == nil {		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" {
 				existing = append(existing, line)
@@ -245,8 +244,7 @@ func EnsureClaudeGitignore(root string) error {
 
 	if changed {
 		content := strings.Join(existing, "\n") + "\n"
-		if err := os.WriteFile(gitignorePath, []byte(content), 0600); err != nil { //nolint:gosec // gitignorePath is constructed from filepath.Join
-			return fmt.Errorf("cannot write %s: %w", gitignorePath, err)
+		if err := os.WriteFile(gitignorePath, []byte(content), 0600); err != nil {			return fmt.Errorf("cannot write %s: %w", gitignorePath, err)
 		}
 	}
 	return nil

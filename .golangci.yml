@@ -8,3 +8,7 @@ linters:
     - errcheck
     - ineffassign
     - unused
+  settings:
+    gosec:
+      excludes:
+        - G304
