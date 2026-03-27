@@ -26,7 +26,7 @@ brews:
   - repository:
       owner: Claudeous
       name: homebrew-tools
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: "{{ .Env.TOOLS_TOKEN }}"
     homepage: "https://github.com/Claudeous/claudeignore"
     description: "Sync gitignore rules to Claude Code sandbox"
     license: "GPL-3.0"
@@ -34,6 +34,15 @@ brews:
       bin.install "claudeignore"
     test: |
       system "#{bin}/claudeignore", "version"
+
+scoops:
+  - repository:
+      owner: Claudeous
+      name: scoop-tools
+      token: "{{ .Env.TOOLS_TOKEN }}"
+    homepage: "https://github.com/Claudeous/claudeignore"
+    description: "Sync gitignore rules to Claude Code sandbox"
+    license: "GPL-3.0"
 
 checksum:
   name_template: "checksums.txt"
