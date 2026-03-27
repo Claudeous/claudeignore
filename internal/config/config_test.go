@@ -169,7 +169,7 @@ func TestWriteLines(t *testing.T) {
 		t.Fatalf("WriteLines error: %v", err)
 	}
 
-	data, err := os.ReadFile(path) //nolint:gosec // test file path
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile error: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestUpdateSettingsFile(t *testing.T) {
 			t.Fatalf("UpdateSettingsFile error: %v", err)
 		}
 
-		data, err2 := os.ReadFile(path) //nolint:gosec // test file path
+		data, err2 := os.ReadFile(path)
 		if err2 != nil {
 			t.Fatal(err2)
 		}
@@ -304,7 +304,7 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 			t.Fatalf("EnsureClaudeGitignore error: %v", err)
 		}
 
-		data, err := os.ReadFile(filepath.Join(dir, ".claude", "claudeignore", ".gitignore")) //nolint:gosec // test path
+		data, err := os.ReadFile(filepath.Join(dir, ".claude", "claudeignore", ".gitignore"))
 		if err != nil {
 			t.Fatalf("ReadFile error: %v", err)
 		}
@@ -323,7 +323,7 @@ func TestEnsureClaudeGitignore(t *testing.T) {
 		}
 
 		path := filepath.Join(dir, ".claude", "claudeignore", ".gitignore")
-		data, _ := os.ReadFile(path) //nolint:gosec // test path
+		data, _ := os.ReadFile(path)
 		lines := 0
 		for _, line := range splitLines(string(data)) {
 			if line == "state.json" {
