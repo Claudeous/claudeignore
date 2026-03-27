@@ -25,7 +25,7 @@ func StyledMessage() string {
 
 // ShouldShow returns true with roughly 20% probability (1-in-5 chance).
 func ShouldShow() bool {
-	return rand.IntN(5) == 0
+	return rand.IntN(5) == 0 //nolint:gosec // not security-sensitive, just tipping display frequency
 }
 
 // BrowserCommand returns the OS-appropriate command and args to open a URL.
@@ -43,5 +43,5 @@ func BrowserCommand(url string) (string, []string) {
 // OpenBrowser opens SupportURL in the system's default browser.
 func OpenBrowser() error {
 	cmd, args := BrowserCommand(SupportURL)
-	return exec.Command(cmd, args...).Start()
+	return exec.Command(cmd, args...).Start() //nolint:gosec // command and args are from BrowserCommand, not user input
 }
