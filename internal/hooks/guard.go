@@ -10,26 +10,32 @@ import (
 	"github.com/claudeous/claudeignore/internal/config"
 )
 
+// GuardResult holds the outcome of the guard check.
+type GuardResult struct {
+	Blocked      bool
+	Reason       string
+	UpdatedInput json.RawMessage // non-nil when we need to output updatedInput on stdout
+}
+
 // Guard is the PreToolUse hook handler.
 // It reads JSON from stdin, extracts the file path, and checks against denyRead.
-// Returns (blocked, reason, error). If blocked is true, the caller should exit 2.
-func Guard(root string) (blocked bool, reason string, err error) {
+func Guard(root string) (*GuardResult, error) {
 	// Read deny list from settings.local.json
 	settingsPath := filepath.Join(root, ".claude", "settings.local.json")
 	settings, err := config.LoadSettings(settingsPath)
 	if err != nil {
-		return false, "", nil // can't read settings, allow
+		return &GuardResult{}, nil // can't read settings, allow
 	}
 
 	denyList := settings.GetDenyList()
 	if len(denyList) == 0 {
-		return false, "", nil
+		return &GuardResult{}, nil
 	}
 
 	// Read hook input from stdin
 	input, err := os.ReadFile("/dev/stdin")
 	if err != nil {
-		return false, "", nil // can't read stdin, allow
+		return &GuardResult{}, nil // can't read stdin, allow
 	}
 
 	var hookInput struct {
@@ -37,29 +43,251 @@ func Guard(root string) (blocked bool, reason string, err error) {
 		ToolInput map[string]interface{} `json:"tool_input"`
 	}
 	if json.Unmarshal(input, &hookInput) != nil {
-		return false, "", nil
+		return &GuardResult{}, nil
 	}
 
 	if hookInput.ToolInput == nil {
-		return false, "", nil
+		return &GuardResult{}, nil
 	}
 
-	// Extract file path from tool_input
+	// Handle Grep specially for broad searches
+	if hookInput.ToolName == "Grep" {
+		return guardGrep(root, hookInput.ToolInput, denyList)
+	}
+
+	// Extract file path from tool_input (Read, Write, Edit, NotebookEdit, etc.)
 	var targetPath string
 	if fp, ok := hookInput.ToolInput["file_path"].(string); ok {
 		targetPath = fp
 	} else if p, ok := hookInput.ToolInput["path"].(string); ok {
 		targetPath = p
-	} else if _, ok := hookInput.ToolInput["pattern"].(string); ok {
-		// Glob pattern, not a path — skip
-		return false, "", nil
 	}
 
 	if targetPath == "" {
-		return false, "", nil
+		return &GuardResult{}, nil
 	}
 
-	return CheckPathBlocked(root, targetPath, denyList)
+	blocked, reason, err := CheckPathBlocked(root, targetPath, denyList)
+	if err != nil {
+		return &GuardResult{}, nil
+	}
+	return &GuardResult{Blocked: blocked, Reason: reason}, nil
+}
+
+// guardGrep handles the Grep tool with three scenarios:
+// A) No path, no glob: inject exclusion glob via updatedInput
+// B) No path, has glob: check intersection with deny list, block if any match
+// C) Has path that is parent of denied entries: inject exclusion glob via updatedInput
+// Otherwise: existing path-based check applies.
+func guardGrep(root string, toolInput map[string]interface{}, denyList []string) (*GuardResult, error) {
+	targetPath, hasPath := toolInput["path"].(string)
+	existingGlob, hasGlob := toolInput["glob"].(string)
+
+	// If there's a specific path, check if it's directly blocked
+	if hasPath && targetPath != "" {
+		blocked, reason, err := CheckPathBlocked(root, targetPath, denyList)
+		if err != nil {
+			return &GuardResult{}, nil // fail open
+		}
+		if blocked {
+			return &GuardResult{Blocked: true, Reason: reason}, nil
+		}
+
+		// Check if path is a parent of any denied entries
+		if isParentOfDenied(root, targetPath, denyList) {
+			// Inject exclusion glob
+			updatedJSON, err := buildUpdatedInputJSON(toolInput, denyList)
+			if err != nil {
+				return &GuardResult{}, nil // fail open
+			}
+			return &GuardResult{UpdatedInput: updatedJSON}, nil
+		}
+
+		// Path is unrelated to deny list, allow as-is
+		return &GuardResult{}, nil
+	}
+
+	// No path (or empty path)
+	if hasGlob && existingGlob != "" {
+		// Scenario B: has glob, check intersection with deny list
+		if globIntersectsDenyList(root, existingGlob, denyList) {
+			reason := "[claudeignore] Access denied: Grep glob pattern matches denied files"
+			return &GuardResult{Blocked: true, Reason: reason}, nil
+		}
+		// No intersection, allow as-is
+		return &GuardResult{}, nil
+	}
+
+	// Scenario A: no path, no glob → inject exclusion glob
+	updatedJSON, err := buildUpdatedInputJSON(toolInput, denyList)
+	if err != nil {
+		return &GuardResult{}, nil // fail open
+	}
+	return &GuardResult{UpdatedInput: updatedJSON}, nil
+}
+
+// isParentOfDenied checks whether the given path is a parent directory
+// of any entry in the deny list.
+func isParentOfDenied(root, targetPath string, denyList []string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(targetPath)
+	if err != nil {
+		return false
+	}
+	relPath, err := filepath.Rel(absRoot, absTarget)
+	if err != nil {
+		return false
+	}
+	if strings.HasPrefix(relPath, "..") {
+		return false
+	}
+
+	normalizedPath := config.Normalize(relPath)
+
+	// Special case: "." means repo root, which is parent of everything
+	if normalizedPath == "." {
+		return len(denyList) > 0
+	}
+
+	for _, deny := range denyList {
+		denyNorm := config.Normalize(deny)
+		if strings.HasPrefix(denyNorm, normalizedPath+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// BuildExclusionGlob creates a ripgrep exclusion glob pattern from the deny list.
+// File entries (containing a dot in basename) stay as-is, directory-like entries get /** appended.
+// Result: "!{.env,secrets/**,node_modules/**}"
+func BuildExclusionGlob(denyList []string) string {
+	if len(denyList) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(denyList))
+	for _, deny := range denyList {
+		norm := config.Normalize(deny)
+		if norm == "" {
+			continue
+		}
+		// Treat entries with a dot in the last path component as files,
+		// everything else as directories.
+		base := filepath.Base(norm)
+		if strings.Contains(base, ".") {
+			parts = append(parts, norm)
+		} else {
+			parts = append(parts, norm+"/**")
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	if len(parts) == 1 {
+		return "!" + parts[0]
+	}
+
+	return "!{" + strings.Join(parts, ",") + "}"
+}
+
+// buildUpdatedInputJSON constructs the full hookSpecificOutput JSON with updatedInput.
+func buildUpdatedInputJSON(toolInput map[string]interface{}, denyList []string) (json.RawMessage, error) {
+	exclusionGlob := BuildExclusionGlob(denyList)
+	if exclusionGlob == "" {
+		return nil, fmt.Errorf("empty exclusion glob")
+	}
+
+	// Copy all original tool input fields into updatedInput
+	updatedInput := make(map[string]interface{}, len(toolInput)+1)
+	for k, v := range toolInput {
+		updatedInput[k] = v
+	}
+	// Override/set the glob with our exclusion pattern
+	updatedInput["glob"] = exclusionGlob
+
+	output := map[string]interface{}{
+		"hookSpecificOutput": map[string]interface{}{
+			"hookEventName":      "PreToolUse",
+			"permissionDecision": "allow",
+			"updatedInput":       updatedInput,
+		},
+	}
+
+	return json.Marshal(output)
+}
+
+// globIntersectsDenyList checks if a glob pattern could match any denied files.
+// It resolves the glob against the repo root and checks each match against the deny list.
+func globIntersectsDenyList(root string, globPattern string, denyList []string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false // fail open
+	}
+
+	// Try to resolve the glob pattern relative to the repo root
+	var matches []string
+	if filepath.IsAbs(globPattern) {
+		matches, err = filepath.Glob(globPattern)
+	} else {
+		matches, err = filepath.Glob(filepath.Join(absRoot, globPattern))
+	}
+	if err != nil || len(matches) == 0 {
+		// If glob resolution fails or finds nothing, check via pattern matching
+		return globPatternMatchesDenyList(globPattern, denyList)
+	}
+
+	// Check if any matched file is in the deny list
+	for _, match := range matches {
+		relPath, err := filepath.Rel(absRoot, match)
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(relPath, "..") {
+			continue
+		}
+		for _, deny := range denyList {
+			denyNorm := config.Normalize(deny)
+			if relPath == denyNorm || strings.HasPrefix(relPath, denyNorm+"/") {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// globPatternMatchesDenyList performs a heuristic check for whether a glob pattern
+// could match denied entries when filepath.Glob cannot resolve it.
+func globPatternMatchesDenyList(globPattern string, denyList []string) bool {
+	for _, deny := range denyList {
+		denyNorm := config.Normalize(deny)
+		matched, err := filepath.Match(globPattern, denyNorm)
+		if err != nil {
+			continue
+		}
+		if matched {
+			return true
+		}
+		// Check if the glob targets a denied directory
+		// e.g., glob "secrets/*" and deny "secrets"
+		if strings.HasSuffix(globPattern, "/*") || strings.HasSuffix(globPattern, "/**") {
+			dir := strings.TrimRight(globPattern, "/*")
+			if denyNorm == dir || strings.HasPrefix(denyNorm, dir+"/") {
+				return true
+			}
+		}
+		// Check if denied entry is a directory and glob matches within it
+		if strings.HasPrefix(globPattern, denyNorm+"/") || globPattern == denyNorm {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckPathBlocked tests whether a given path is blocked by the deny list.
