@@ -27,7 +27,7 @@ func TestCheck_WithStateFile_DoesNotReturnNil(t *testing.T) {
 	root := t.TempDir()
 
 	// Create the state directory and file
-	err := os.MkdirAll(config.StateFilePath(root)[:len(config.StateFilePath(root))-len("state.json")], 0755)
+	err := os.MkdirAll(config.StateFilePath(root)[:len(config.StateFilePath(root))-len("state.json")], 0750)
 	if err != nil {
 		t.Fatal(err)
 	}
