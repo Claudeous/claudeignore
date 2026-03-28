@@ -27,6 +27,11 @@ type CheckResult struct {
 // Check runs the UserPromptSubmit hook logic.
 // Returns nil result if everything is up to date (silent exit).
 func Check(root string) (*CheckResult, error) {
+	// Skip projects that were never initialized with claudeignore
+	if _, err := os.Stat(config.StateFilePath(root)); os.IsNotExist(err) {
+		return nil, nil
+	}
+
 	state := config.LoadState(root)
 	mode := state.Mode
 	if mode == "" {

@@ -112,13 +112,16 @@ func runCommand(cmd string) error {
 		}
 		return nil
 	case "guard":
-		blocked, reason, err := hooks.Guard(root)
+		guardResult, err := hooks.Guard(root)
 		if err != nil {
 			return nil
 		}
-		if blocked {
-			fmt.Fprintln(os.Stderr, string(hooks.GuardDenyResponse(reason)))
+		if guardResult.Blocked {
+			fmt.Fprintln(os.Stderr, string(hooks.GuardDenyResponse(guardResult.Reason)))
 			os.Exit(2)
+		}
+		if guardResult.UpdatedInput != nil {
+			fmt.Println(string(guardResult.UpdatedInput))
 		}
 		return nil
 	case "install-hook":
