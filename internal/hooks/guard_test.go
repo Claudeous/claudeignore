@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -162,5 +163,440 @@ func TestGuardDenyResponse(t *testing.T) {
 	expected := `{"decision":"deny","reason":"test reason"}`
 	if string(resp) != expected {
 		t.Errorf("got %s, want %s", string(resp), expected)
+	}
+}
+
+// --- New tests for Grep guard and related helpers ---
+
+func TestBuildExclusionGlob(t *testing.T) {
+	tests := []struct {
+		name     string
+		denyList []string
+		expected string
+	}{
+		{
+			name:     "empty deny list",
+			denyList: nil,
+			expected: "",
+		},
+		{
+			name:     "single file entry",
+			denyList: []string{".env"},
+			expected: "!.env",
+		},
+		{
+			name:     "single directory entry",
+			denyList: []string{"secrets"},
+			expected: "!secrets/**",
+		},
+		{
+			name:     "mixed file and directory entries",
+			denyList: []string{".env", "secrets", "node_modules"},
+			expected: "!{.env,secrets/**,node_modules/**}",
+		},
+		{
+			name:     "nested directory with dot in file",
+			denyList: []string{"config/prod", ".env", "data.json"},
+			expected: "!{config/prod/**,.env,data.json}",
+		},
+		{
+			name:     "entry with trailing slash normalized",
+			denyList: []string{"secrets/"},
+			expected: "!secrets/**",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BuildExclusionGlob(tt.denyList)
+			if result != tt.expected {
+				t.Errorf("BuildExclusionGlob(%v) = %q, want %q", tt.denyList, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsParentOfDenied(t *testing.T) {
+	root := t.TempDir()
+
+	denyList := []string{
+		".env",
+		"config/prod",
+		"secrets",
+		"node_modules",
+	}
+
+	tests := []struct {
+		name       string
+		targetPath string
+		isParent   bool
+	}{
+		{
+			name:       "config is parent of config/prod",
+			targetPath: filepath.Join(root, "config"),
+			isParent:   true,
+		},
+		{
+			name:       "secrets is not parent (exact match)",
+			targetPath: filepath.Join(root, "secrets"),
+			isParent:   false, // "secrets" itself is denied, not a parent
+		},
+		{
+			name:       "src is not parent of any denied entry",
+			targetPath: filepath.Join(root, "src"),
+			isParent:   false,
+		},
+		{
+			name:       "root is parent of all denied entries",
+			targetPath: root,
+			isParent:   true, // "." is prefix of everything via Normalize → ""
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isParentOfDenied(root, tt.targetPath, denyList)
+			if result != tt.isParent {
+				t.Errorf("isParentOfDenied(root, %q, denyList) = %v, want %v",
+					tt.targetPath, result, tt.isParent)
+			}
+		})
+	}
+}
+
+func TestGuardGrep_NoPathNoGlob(t *testing.T) {
+	denyList := []string{".env", "secrets", "node_modules"}
+	root := t.TempDir()
+
+	toolInput := map[string]interface{}{
+		"pattern":     "API_KEY",
+		"output_mode": "content",
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not be blocked
+	if result.Blocked {
+		t.Fatal("expected not blocked, got blocked")
+	}
+
+	// Should have updatedInput
+	if result.UpdatedInput == nil {
+		t.Fatal("expected updatedInput to be set")
+	}
+
+	// Parse and verify the output
+	var output map[string]interface{}
+	if err := json.Unmarshal(result.UpdatedInput, &output); err != nil {
+		t.Fatalf("invalid JSON in updatedInput: %v", err)
+	}
+
+	hookOutput, ok := output["hookSpecificOutput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing hookSpecificOutput")
+	}
+
+	if hookOutput["hookEventName"] != "PreToolUse" {
+		t.Errorf("hookEventName = %v, want PreToolUse", hookOutput["hookEventName"])
+	}
+	if hookOutput["permissionDecision"] != "allow" {
+		t.Errorf("permissionDecision = %v, want allow", hookOutput["permissionDecision"])
+	}
+
+	updatedInput, ok := hookOutput["updatedInput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing updatedInput")
+	}
+
+	// All original fields must be preserved
+	if updatedInput["pattern"] != "API_KEY" {
+		t.Errorf("pattern = %v, want API_KEY", updatedInput["pattern"])
+	}
+	if updatedInput["output_mode"] != "content" {
+		t.Errorf("output_mode = %v, want content", updatedInput["output_mode"])
+	}
+
+	// Exclusion glob must be set
+	glob, ok := updatedInput["glob"].(string)
+	if !ok {
+		t.Fatal("missing glob in updatedInput")
+	}
+	if glob != "!{.env,secrets/**,node_modules/**}" {
+		t.Errorf("glob = %q, want %q", glob, "!{.env,secrets/**,node_modules/**}")
+	}
+}
+
+func TestGuardGrep_NoPathGlobIntersects(t *testing.T) {
+	root := t.TempDir()
+	denyList := []string{".env", "secrets"}
+
+	// Create .env so filepath.Glob can find it
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SECRET=x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	toolInput := map[string]interface{}{
+		"pattern": "SECRET",
+		"glob":    ".*", // matches .env
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Blocked {
+		t.Error("expected blocked when glob intersects deny list")
+	}
+}
+
+func TestGuardGrep_NoPathGlobNoIntersection(t *testing.T) {
+	root := t.TempDir()
+	denyList := []string{".env", "secrets"}
+
+	// Create a safe file
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	toolInput := map[string]interface{}{
+		"pattern": "func",
+		"glob":    "*.go",
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Error("expected not blocked when glob doesn't intersect deny list")
+	}
+
+	// Should not have updatedInput (allowed as-is)
+	if result.UpdatedInput != nil {
+		t.Error("expected no updatedInput for non-intersecting glob")
+	}
+}
+
+func TestGuardGrep_PathIsParent(t *testing.T) {
+	root := t.TempDir()
+	denyList := []string{"config/prod", ".env"}
+
+	toolInput := map[string]interface{}{
+		"pattern": "password",
+		"path":    filepath.Join(root, "config"),
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Error("expected not blocked (should inject updatedInput instead)")
+	}
+
+	if result.UpdatedInput == nil {
+		t.Fatal("expected updatedInput to be set for parent path")
+	}
+
+	// Verify the updatedInput preserves original fields
+	var output map[string]interface{}
+	if err := json.Unmarshal(result.UpdatedInput, &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	hookOutput := output["hookSpecificOutput"].(map[string]interface{})
+	updatedInput := hookOutput["updatedInput"].(map[string]interface{})
+
+	if updatedInput["pattern"] != "password" {
+		t.Errorf("pattern = %v, want password", updatedInput["pattern"])
+	}
+	if updatedInput["path"] != filepath.Join(root, "config") {
+		t.Errorf("path = %v, want %s", updatedInput["path"], filepath.Join(root, "config"))
+	}
+	if _, ok := updatedInput["glob"].(string); !ok {
+		t.Error("expected glob to be set in updatedInput")
+	}
+}
+
+func TestGuardGrep_PathDenied(t *testing.T) {
+	root := t.TempDir()
+	denyList := []string{"secrets", ".env"}
+
+	toolInput := map[string]interface{}{
+		"pattern": "key",
+		"path":    filepath.Join(root, "secrets"),
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Blocked {
+		t.Error("expected blocked when path is directly denied")
+	}
+}
+
+func TestGuardGrep_PathUnrelated(t *testing.T) {
+	root := t.TempDir()
+	denyList := []string{".env", "secrets"}
+
+	toolInput := map[string]interface{}{
+		"pattern": "func",
+		"path":    filepath.Join(root, "src"),
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Error("expected not blocked for unrelated path")
+	}
+	if result.UpdatedInput != nil {
+		t.Error("expected no updatedInput for unrelated path")
+	}
+}
+
+func TestGlobPatternMatchesDenyList(t *testing.T) {
+	denyList := []string{".env", "secrets", "config/prod"}
+
+	tests := []struct {
+		name    string
+		glob    string
+		matches bool
+	}{
+		{
+			name:    "glob matches denied file",
+			glob:    ".env",
+			matches: true,
+		},
+		{
+			name:    "glob wildcard matches denied file",
+			glob:    ".*",
+			matches: true, // matches .env
+		},
+		{
+			name:    "glob targets denied directory",
+			glob:    "secrets/*",
+			matches: true,
+		},
+		{
+			name:    "glob doesn't match any denied",
+			glob:    "*.go",
+			matches: false,
+		},
+		{
+			name:    "glob matches denied nested path",
+			glob:    "config/prod",
+			matches: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := globPatternMatchesDenyList(tt.glob, denyList)
+			if result != tt.matches {
+				t.Errorf("globPatternMatchesDenyList(%q) = %v, want %v", tt.glob, result, tt.matches)
+			}
+		})
+	}
+}
+
+func TestGlobIntersectsDenyList_WithFiles(t *testing.T) {
+	root := t.TempDir()
+	denyList := []string{".env", "secrets"}
+
+	// Create the denied file so glob resolution finds it
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Create a safe file
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Glob that matches .env
+	if !globIntersectsDenyList(root, ".*", denyList) {
+		t.Error("expected .* to intersect deny list (matches .env)")
+	}
+
+	// Glob that only matches safe files
+	if globIntersectsDenyList(root, "*.md", denyList) {
+		t.Error("expected *.md not to intersect deny list")
+	}
+}
+
+func TestBuildUpdatedInputJSON(t *testing.T) {
+	denyList := []string{".env", "secrets"}
+	toolInput := map[string]interface{}{
+		"pattern":     "password",
+		"output_mode": "content",
+		"-n":          true,
+	}
+
+	result, err := buildUpdatedInputJSON(toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal(result, &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	hookOutput, ok := output["hookSpecificOutput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing hookSpecificOutput")
+	}
+
+	if hookOutput["hookEventName"] != "PreToolUse" {
+		t.Errorf("hookEventName = %v, want PreToolUse", hookOutput["hookEventName"])
+	}
+	if hookOutput["permissionDecision"] != "allow" {
+		t.Errorf("permissionDecision = %v, want allow", hookOutput["permissionDecision"])
+	}
+
+	updatedInput, ok := hookOutput["updatedInput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing updatedInput")
+	}
+
+	// Verify all original fields preserved
+	if updatedInput["pattern"] != "password" {
+		t.Errorf("pattern not preserved")
+	}
+	if updatedInput["output_mode"] != "content" {
+		t.Errorf("output_mode not preserved")
+	}
+	if updatedInput["-n"] != true {
+		t.Errorf("-n not preserved")
+	}
+
+	// Verify glob is set
+	glob, ok := updatedInput["glob"].(string)
+	if !ok || glob == "" {
+		t.Fatal("glob not set in updatedInput")
+	}
+	if glob != "!{.env,secrets/**}" {
+		t.Errorf("glob = %q, want %q", glob, "!{.env,secrets/**}")
+	}
+}
+
+func TestBuildUpdatedInputJSON_EmptyDenyList(t *testing.T) {
+	toolInput := map[string]interface{}{
+		"pattern": "test",
+	}
+
+	_, err := buildUpdatedInputJSON(toolInput, nil)
+	if err == nil {
+		t.Error("expected error for empty deny list")
 	}
 }
