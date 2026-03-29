@@ -284,7 +284,7 @@ func TestGuardGrep_NoPathNoGlob(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chdir(origDir) })
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	toolInput := map[string]interface{}{
 		"pattern":     "API_KEY",
@@ -685,7 +685,7 @@ func TestGuardGrep_SubdirectoryNoPath(t *testing.T) {
 
 	// Create denied file
 	configDir := filepath.Join(root, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "secrets.yaml"), []byte("API_KEY=secret"), 0600); err != nil {
@@ -702,7 +702,7 @@ func TestGuardGrep_SubdirectoryNoPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(originalCwd)
+	defer func() { _ = os.Chdir(originalCwd) }()
 
 	// Resolve symlinks for macOS (/var -> /private/var)
 	resolvedConfig, err := filepath.EvalSymlinks(configDir)
@@ -753,7 +753,7 @@ func TestGuardGrep_SubdirectoryWithPath(t *testing.T) {
 	root := t.TempDir()
 
 	configDir := filepath.Join(root, "config")
-	if err := os.MkdirAll(filepath.Join(configDir, "prod"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(configDir, "prod"), 0750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "prod", "db.yml"), []byte("password: secret"), 0600); err != nil {
@@ -807,7 +807,7 @@ func TestGuardGrep_DenyOutsideSearchBase(t *testing.T) {
 	root := t.TempDir()
 
 	srcDir := filepath.Join(root, "src")
-	if err := os.MkdirAll(srcDir, 0755); err != nil {
+	if err := os.MkdirAll(srcDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -815,7 +815,7 @@ func TestGuardGrep_DenyOutsideSearchBase(t *testing.T) {
 
 	// Change cwd to src/ — neither .env nor config/secrets.yaml is under src/
 	originalCwd, _ := os.Getwd()
-	defer os.Chdir(originalCwd)
+	defer func() { _ = os.Chdir(originalCwd) }()
 
 	resolvedSrc, err := filepath.EvalSymlinks(srcDir)
 	if err != nil {
