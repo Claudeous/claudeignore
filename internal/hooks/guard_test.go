@@ -676,3 +676,171 @@ func TestBuildExclusionGlob_Subdirectory(t *testing.T) {
 		})
 	}
 }
+
+// --- Integration tests for guardGrep from subdirectory ---
+
+func TestGuardGrep_SubdirectoryNoPath(t *testing.T) {
+	// Simulate: repo at root, Claude launched from root/config (cwd)
+	root := t.TempDir()
+
+	// Create denied file
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "secrets.yaml"), []byte("API_KEY=secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "app.yaml"), []byte("name: myapp"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	denyList := []string{"config/secrets.yaml"}
+
+	// Change cwd to the subdirectory (simulating Claude launched from there)
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(originalCwd)
+
+	// Resolve symlinks for macOS (/var -> /private/var)
+	resolvedConfig, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(resolvedConfig); err != nil {
+		t.Fatal(err)
+	}
+
+	// Grep with no path, no glob → should inject exclusion relative to cwd
+	toolInput := map[string]interface{}{
+		"pattern": "API_KEY",
+	}
+
+	result, err := guardGrep(resolvedRoot, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Fatal("expected not blocked, got blocked")
+	}
+	if result.UpdatedInput == nil {
+		t.Fatal("expected updatedInput to be set")
+	}
+
+	// Parse the injected glob
+	var output map[string]interface{}
+	if err := json.Unmarshal(result.UpdatedInput, &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	hookOutput := output["hookSpecificOutput"].(map[string]interface{})
+	updatedInput := hookOutput["updatedInput"].(map[string]interface{})
+	glob := updatedInput["glob"].(string)
+
+	// The glob must be relative to the cwd (config/), not the repo root
+	if glob != "!secrets.yaml" {
+		t.Errorf("glob = %q, want %q (must be relative to cwd, not repo root)", glob, "!secrets.yaml")
+	}
+}
+
+func TestGuardGrep_SubdirectoryWithPath(t *testing.T) {
+	root := t.TempDir()
+
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(filepath.Join(configDir, "prod"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "prod", "db.yml"), []byte("password: secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolve symlinks for macOS
+	resolvedConfig, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	denyList := []string{"config/prod"}
+
+	toolInput := map[string]interface{}{
+		"pattern": "password",
+		"path":    resolvedConfig, // explicit path = the search base
+	}
+
+	result, err := guardGrep(resolvedRoot, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Fatal("expected not blocked (should inject updatedInput)")
+	}
+	if result.UpdatedInput == nil {
+		t.Fatal("expected updatedInput to be set")
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal(result.UpdatedInput, &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	hookOutput := output["hookSpecificOutput"].(map[string]interface{})
+	updatedInput := hookOutput["updatedInput"].(map[string]interface{})
+	glob := updatedInput["glob"].(string)
+
+	// "config/prod" relative to "config/" = "prod"
+	if glob != "!prod/**" {
+		t.Errorf("glob = %q, want %q (must be relative to search path, not repo root)", glob, "!prod/**")
+	}
+}
+
+func TestGuardGrep_DenyOutsideSearchBase(t *testing.T) {
+	root := t.TempDir()
+
+	srcDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	denyList := []string{".env", "config/secrets.yaml"}
+
+	// Change cwd to src/ — neither .env nor config/secrets.yaml is under src/
+	originalCwd, _ := os.Getwd()
+	defer os.Chdir(originalCwd)
+
+	resolvedSrc, err := filepath.EvalSymlinks(srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chdir(resolvedSrc)
+
+	toolInput := map[string]interface{}{
+		"pattern": "import",
+	}
+
+	result, err := guardGrep(resolvedRoot, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// buildUpdatedInputJSON returns error for empty glob → guardGrep fails open
+	if result.Blocked {
+		t.Error("expected not blocked when deny entries are outside search base")
+	}
+	if result.UpdatedInput != nil {
+		t.Error("expected no updatedInput when deny entries are outside search base")
+	}
+}
