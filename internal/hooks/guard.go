@@ -83,6 +83,22 @@ func guardGrep(root string, toolInput map[string]interface{}, denyList []string)
 	targetPath, hasPath := toolInput["path"].(string)
 	existingGlob, hasGlob := toolInput["glob"].(string)
 
+	// Determine the effective search base for glob computation.
+	// If Grep has an explicit path, use it. Otherwise fall back to cwd
+	// (which is where ripgrep will search).
+	searchBase := root
+	if hasPath && targetPath != "" {
+		abs, err := filepath.Abs(targetPath)
+		if err == nil {
+			searchBase = abs
+		}
+	} else {
+		cwd, err := os.Getwd()
+		if err == nil {
+			searchBase = cwd
+		}
+	}
+
 	// If there's a specific path, check if it's directly blocked
 	if hasPath && targetPath != "" {
 		blocked, reason, err := CheckPathBlocked(root, targetPath, denyList)
@@ -95,8 +111,7 @@ func guardGrep(root string, toolInput map[string]interface{}, denyList []string)
 
 		// Check if path is a parent of any denied entries
 		if isParentOfDenied(root, targetPath, denyList) {
-			// Inject exclusion glob
-			updatedJSON, err := buildUpdatedInputJSON(toolInput, denyList)
+			updatedJSON, err := buildUpdatedInputJSON(root, searchBase, toolInput, denyList)
 			if err != nil {
 				return &GuardResult{}, nil // fail open
 			}
@@ -109,17 +124,15 @@ func guardGrep(root string, toolInput map[string]interface{}, denyList []string)
 
 	// No path (or empty path)
 	if hasGlob && existingGlob != "" {
-		// Scenario B: has glob, check intersection with deny list
 		if globIntersectsDenyList(root, existingGlob, denyList) {
 			reason := "[claudeignore] Access denied: Grep glob pattern matches denied files"
 			return &GuardResult{Blocked: true, Reason: reason}, nil
 		}
-		// No intersection, allow as-is
 		return &GuardResult{}, nil
 	}
 
 	// Scenario A: no path, no glob → inject exclusion glob
-	updatedJSON, err := buildUpdatedInputJSON(toolInput, denyList)
+	updatedJSON, err := buildUpdatedInputJSON(root, searchBase, toolInput, denyList)
 	if err != nil {
 		return &GuardResult{}, nil // fail open
 	}
@@ -162,9 +175,11 @@ func isParentOfDenied(root, targetPath string, denyList []string) bool {
 }
 
 // BuildExclusionGlob creates a ripgrep exclusion glob pattern from the deny list.
+// Patterns are computed relative to searchBase so they work when ripgrep runs
+// from a subdirectory of the repo root.
 // File entries (containing a dot in basename) stay as-is, directory-like entries get /** appended.
-// Result: "!{.env,secrets/**,node_modules/**}"
-func BuildExclusionGlob(denyList []string) string {
+// Entries outside searchBase are skipped (not in the search tree).
+func BuildExclusionGlob(root, searchBase string, denyList []string) string {
 	if len(denyList) == 0 {
 		return ""
 	}
@@ -175,13 +190,28 @@ func BuildExclusionGlob(denyList []string) string {
 		if norm == "" {
 			continue
 		}
+
+		// Compute absolute path of the denied entry
+		absDeny := filepath.Join(root, norm)
+
+		// Compute path relative to the search base
+		relPath, err := filepath.Rel(searchBase, absDeny)
+		if err != nil {
+			continue
+		}
+
+		// Skip entries outside the search base (they start with "..")
+		if strings.HasPrefix(relPath, "..") {
+			continue
+		}
+
 		// Treat entries with a dot in the last path component as files,
 		// everything else as directories.
-		base := filepath.Base(norm)
+		base := filepath.Base(relPath)
 		if strings.Contains(base, ".") {
-			parts = append(parts, norm)
+			parts = append(parts, relPath)
 		} else {
-			parts = append(parts, norm+"/**")
+			parts = append(parts, relPath+"/**")
 		}
 	}
 
@@ -197,8 +227,8 @@ func BuildExclusionGlob(denyList []string) string {
 }
 
 // buildUpdatedInputJSON constructs the full hookSpecificOutput JSON with updatedInput.
-func buildUpdatedInputJSON(toolInput map[string]interface{}, denyList []string) (json.RawMessage, error) {
-	exclusionGlob := BuildExclusionGlob(denyList)
+func buildUpdatedInputJSON(root, searchBase string, toolInput map[string]interface{}, denyList []string) (json.RawMessage, error) {
+	exclusionGlob := BuildExclusionGlob(root, searchBase, denyList)
 	if exclusionGlob == "" {
 		return nil, fmt.Errorf("empty exclusion glob")
 	}
