@@ -208,9 +208,9 @@ func TestBuildExclusionGlob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BuildExclusionGlob(tt.denyList)
+			result := BuildExclusionGlob("/repo", "/repo", tt.denyList)
 			if result != tt.expected {
-				t.Errorf("BuildExclusionGlob(%v) = %q, want %q", tt.denyList, result, tt.expected)
+				t.Errorf("BuildExclusionGlob(%q, %q, %v) = %q, want %q", "/repo", "/repo", tt.denyList, result, tt.expected)
 			}
 		})
 	}
@@ -267,6 +267,24 @@ func TestIsParentOfDenied(t *testing.T) {
 func TestGuardGrep_NoPathNoGlob(t *testing.T) {
 	denyList := []string{".env", "secrets", "node_modules"}
 	root := t.TempDir()
+
+	// Resolve symlinks (macOS /var -> /private/var) so that root and
+	// os.Getwd() use the same physical path prefix.
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// guardGrep uses os.Getwd() as search base when no path is given,
+	// so chdir into root so the deny entries resolve correctly.
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
 
 	toolInput := map[string]interface{}{
 		"pattern":     "API_KEY",
@@ -542,7 +560,7 @@ func TestBuildUpdatedInputJSON(t *testing.T) {
 		"-n":          true,
 	}
 
-	result, err := buildUpdatedInputJSON(toolInput, denyList)
+	result, err := buildUpdatedInputJSON("/repo", "/repo", toolInput, denyList)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -595,8 +613,66 @@ func TestBuildUpdatedInputJSON_EmptyDenyList(t *testing.T) {
 		"pattern": "test",
 	}
 
-	_, err := buildUpdatedInputJSON(toolInput, nil)
+	_, err := buildUpdatedInputJSON("/repo", "/repo", toolInput, nil)
 	if err == nil {
 		t.Error("expected error for empty deny list")
+	}
+}
+
+func TestBuildExclusionGlob_Subdirectory(t *testing.T) {
+	root := "/repo"
+
+	tests := []struct {
+		name       string
+		searchBase string
+		denyList   []string
+		expected   string
+	}{
+		{
+			name:       "search from subdirectory containing denied file",
+			searchBase: "/repo/config",
+			denyList:   []string{"config/secrets.yaml"},
+			expected:   "!secrets.yaml",
+		},
+		{
+			name:       "search from subdirectory with nested deny",
+			searchBase: "/repo/config",
+			denyList:   []string{"config/prod"},
+			expected:   "!prod/**",
+		},
+		{
+			name:       "search from repo root (no change)",
+			searchBase: "/repo",
+			denyList:   []string{".env", "secrets"},
+			expected:   "!{.env,secrets/**}",
+		},
+		{
+			name:       "deny entry outside search base is skipped",
+			searchBase: "/repo/src",
+			denyList:   []string{".env", "config/secrets.yaml"},
+			expected:   "",
+		},
+		{
+			name:       "mixed: some inside, some outside search base",
+			searchBase: "/repo/config",
+			denyList:   []string{".env", "config/secrets.yaml", "config/prod"},
+			expected:   "!{secrets.yaml,prod/**}",
+		},
+		{
+			name:       "search from root with single deny",
+			searchBase: "/repo",
+			denyList:   []string{".env"},
+			expected:   "!.env",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BuildExclusionGlob(root, tt.searchBase, tt.denyList)
+			if result != tt.expected {
+				t.Errorf("BuildExclusionGlob(%q, %q, %v) = %q, want %q",
+					root, tt.searchBase, tt.denyList, result, tt.expected)
+			}
+		})
 	}
 }
