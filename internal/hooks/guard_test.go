@@ -825,7 +825,9 @@ func TestGuardGrep_DenyOutsideSearchBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Chdir(resolvedSrc)
+	if err := os.Chdir(resolvedSrc); err != nil {
+		t.Fatal(err)
+	}
 
 	toolInput := map[string]interface{}{
 		"pattern": "import",
