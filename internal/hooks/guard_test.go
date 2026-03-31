@@ -208,9 +208,9 @@ func TestBuildExclusionGlob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BuildExclusionGlob(tt.denyList)
+			result := BuildExclusionGlob("/repo", "/repo", tt.denyList)
 			if result != tt.expected {
-				t.Errorf("BuildExclusionGlob(%v) = %q, want %q", tt.denyList, result, tt.expected)
+				t.Errorf("BuildExclusionGlob(%q, %q, %v) = %q, want %q", "/repo", "/repo", tt.denyList, result, tt.expected)
 			}
 		})
 	}
@@ -267,6 +267,24 @@ func TestIsParentOfDenied(t *testing.T) {
 func TestGuardGrep_NoPathNoGlob(t *testing.T) {
 	denyList := []string{".env", "secrets", "node_modules"}
 	root := t.TempDir()
+
+	// Resolve symlinks (macOS /var -> /private/var) so that root and
+	// os.Getwd() use the same physical path prefix.
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// guardGrep uses os.Getwd() as search base when no path is given,
+	// so chdir into root so the deny entries resolve correctly.
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	toolInput := map[string]interface{}{
 		"pattern":     "API_KEY",
@@ -542,7 +560,7 @@ func TestBuildUpdatedInputJSON(t *testing.T) {
 		"-n":          true,
 	}
 
-	result, err := buildUpdatedInputJSON(toolInput, denyList)
+	result, err := buildUpdatedInputJSON("/repo", "/repo", toolInput, denyList)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -595,8 +613,236 @@ func TestBuildUpdatedInputJSON_EmptyDenyList(t *testing.T) {
 		"pattern": "test",
 	}
 
-	_, err := buildUpdatedInputJSON(toolInput, nil)
+	_, err := buildUpdatedInputJSON("/repo", "/repo", toolInput, nil)
 	if err == nil {
 		t.Error("expected error for empty deny list")
+	}
+}
+
+func TestBuildExclusionGlob_Subdirectory(t *testing.T) {
+	root := "/repo"
+
+	tests := []struct {
+		name       string
+		searchBase string
+		denyList   []string
+		expected   string
+	}{
+		{
+			name:       "search from subdirectory containing denied file",
+			searchBase: "/repo/config",
+			denyList:   []string{"config/secrets.yaml"},
+			expected:   "!secrets.yaml",
+		},
+		{
+			name:       "search from subdirectory with nested deny",
+			searchBase: "/repo/config",
+			denyList:   []string{"config/prod"},
+			expected:   "!prod/**",
+		},
+		{
+			name:       "search from repo root (no change)",
+			searchBase: "/repo",
+			denyList:   []string{".env", "secrets"},
+			expected:   "!{.env,secrets/**}",
+		},
+		{
+			name:       "deny entry outside search base is skipped",
+			searchBase: "/repo/src",
+			denyList:   []string{".env", "config/secrets.yaml"},
+			expected:   "",
+		},
+		{
+			name:       "mixed: some inside, some outside search base",
+			searchBase: "/repo/config",
+			denyList:   []string{".env", "config/secrets.yaml", "config/prod"},
+			expected:   "!{secrets.yaml,prod/**}",
+		},
+		{
+			name:       "search from root with single deny",
+			searchBase: "/repo",
+			denyList:   []string{".env"},
+			expected:   "!.env",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BuildExclusionGlob(root, tt.searchBase, tt.denyList)
+			if result != tt.expected {
+				t.Errorf("BuildExclusionGlob(%q, %q, %v) = %q, want %q",
+					root, tt.searchBase, tt.denyList, result, tt.expected)
+			}
+		})
+	}
+}
+
+// --- Integration tests for guardGrep from subdirectory ---
+
+func TestGuardGrep_SubdirectoryNoPath(t *testing.T) {
+	// Simulate: repo at root, Claude launched from root/config (cwd)
+	root := t.TempDir()
+
+	// Create denied file
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "secrets.yaml"), []byte("API_KEY=secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "app.yaml"), []byte("name: myapp"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	denyList := []string{"config/secrets.yaml"}
+
+	// Change cwd to the subdirectory (simulating Claude launched from there)
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(originalCwd) }()
+
+	// Resolve symlinks for macOS (/var -> /private/var)
+	resolvedConfig, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(resolvedConfig); err != nil {
+		t.Fatal(err)
+	}
+
+	// Grep with no path, no glob → should inject exclusion relative to cwd
+	toolInput := map[string]interface{}{
+		"pattern": "API_KEY",
+	}
+
+	result, err := guardGrep(resolvedRoot, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Fatal("expected not blocked, got blocked")
+	}
+	if result.UpdatedInput == nil {
+		t.Fatal("expected updatedInput to be set")
+	}
+
+	// Parse the injected glob
+	var output map[string]interface{}
+	if err := json.Unmarshal(result.UpdatedInput, &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	hookOutput := output["hookSpecificOutput"].(map[string]interface{})
+	updatedInput := hookOutput["updatedInput"].(map[string]interface{})
+	glob := updatedInput["glob"].(string)
+
+	// The glob must be relative to the cwd (config/), not the repo root
+	if glob != "!secrets.yaml" {
+		t.Errorf("glob = %q, want %q (must be relative to cwd, not repo root)", glob, "!secrets.yaml")
+	}
+}
+
+func TestGuardGrep_SubdirectoryWithPath(t *testing.T) {
+	root := t.TempDir()
+
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(filepath.Join(configDir, "prod"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "prod", "db.yml"), []byte("password: secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolve symlinks for macOS
+	resolvedConfig, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	denyList := []string{"config/prod"}
+
+	toolInput := map[string]interface{}{
+		"pattern": "password",
+		"path":    resolvedConfig, // explicit path = the search base
+	}
+
+	result, err := guardGrep(resolvedRoot, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Fatal("expected not blocked (should inject updatedInput)")
+	}
+	if result.UpdatedInput == nil {
+		t.Fatal("expected updatedInput to be set")
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal(result.UpdatedInput, &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	hookOutput := output["hookSpecificOutput"].(map[string]interface{})
+	updatedInput := hookOutput["updatedInput"].(map[string]interface{})
+	glob := updatedInput["glob"].(string)
+
+	// "config/prod" relative to "config/" = "prod"
+	if glob != "!prod/**" {
+		t.Errorf("glob = %q, want %q (must be relative to search path, not repo root)", glob, "!prod/**")
+	}
+}
+
+func TestGuardGrep_DenyOutsideSearchBase(t *testing.T) {
+	root := t.TempDir()
+
+	srcDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(srcDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	denyList := []string{".env", "config/secrets.yaml"}
+
+	// Change cwd to src/ — neither .env nor config/secrets.yaml is under src/
+	originalCwd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(originalCwd) }()
+
+	resolvedSrc, err := filepath.EvalSymlinks(srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(resolvedSrc); err != nil {
+		t.Fatal(err)
+	}
+
+	toolInput := map[string]interface{}{
+		"pattern": "import",
+	}
+
+	result, err := guardGrep(resolvedRoot, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// buildUpdatedInputJSON returns error for empty glob → guardGrep fails open
+	if result.Blocked {
+		t.Error("expected not blocked when deny entries are outside search base")
+	}
+	if result.UpdatedInput != nil {
+		t.Error("expected no updatedInput when deny entries are outside search base")
 	}
 }
