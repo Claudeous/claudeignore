@@ -73,16 +73,20 @@ func Check(root string) (*CheckResult, error) {
 func findNewUnprotectedFiles(root, mode string) []string {
 	var expected []string
 	if mode == "manual" {
-		allPaths, _ := git.AllIgnoredPaths(root)
-		gitPaths, _ := git.GitIgnoredPaths(root)
-		gitSet := config.NewPathSet(gitPaths)
-		seen := config.NewPathSet(nil)
-		for _, p := range allPaths {
-			n := config.Normalize(p)
-			if !config.PathSetContains(gitSet, p) && !config.PathSetContains(seen, n) {
-				expected = append(expected, n)
-				seen[n] = struct{}{}
+		if git.HasGit(root) {
+			allPaths, _ := git.AllIgnoredPaths(root)
+			gitPaths, _ := git.GitIgnoredPaths(root)
+			gitSet := config.NewPathSet(gitPaths)
+			seen := config.NewPathSet(nil)
+			for _, p := range allPaths {
+				n := config.Normalize(p)
+				if !config.PathSetContains(gitSet, p) && !config.PathSetContains(seen, n) {
+					expected = append(expected, n)
+					seen[n] = struct{}{}
+				}
 			}
+		} else {
+			expected, _ = git.ManualDenyPaths(root)
 		}
 	} else {
 		paths, _ := git.AllIgnoredPaths(root)

@@ -58,6 +58,9 @@ func Init(root string) error {
 		fmt.Println("Manual mode enabled.")
 		fmt.Println("Edit .claude.ignore then run 'claudeignore sync'.")
 	} else {
+		if !git.HasGit(root) {
+			return fmt.Errorf("gitignore mode requires a git repository")
+		}
 		paths, err := git.GitIgnoredPaths(root)
 		if err != nil {
 			return err
