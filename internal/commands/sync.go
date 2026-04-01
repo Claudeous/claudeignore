@@ -26,19 +26,27 @@ func SyncWithMode(root string, mode string, dryRun bool) error {
 	var deny []string
 
 	if mode == "manual" {
-		allPaths, err := git.AllIgnoredPaths(root)
-		if err != nil {
-			return err
-		}
-		gitPaths, _ := git.GitIgnoredPaths(root)
-		gitSet := config.NewPathSet(gitPaths)
-		seen := config.NewPathSet(nil)
+		if git.HasGit(root) {
+			allPaths, err := git.AllIgnoredPaths(root)
+			if err != nil {
+				return err
+			}
+			gitPaths, _ := git.GitIgnoredPaths(root)
+			gitSet := config.NewPathSet(gitPaths)
+			seen := config.NewPathSet(nil)
 
-		for _, p := range allPaths {
-			n := config.Normalize(p)
-			if !config.PathSetContains(gitSet, p) && !config.PathSetContains(seen, n) {
-				deny = append(deny, n)
-				seen[n] = struct{}{}
+			for _, p := range allPaths {
+				n := config.Normalize(p)
+				if !config.PathSetContains(gitSet, p) && !config.PathSetContains(seen, n) {
+					deny = append(deny, n)
+					seen[n] = struct{}{}
+				}
+			}
+		} else {
+			var err error
+			deny, err = git.ManualDenyPaths(root)
+			if err != nil {
+				return err
 			}
 		}
 	} else {

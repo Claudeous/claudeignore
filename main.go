@@ -10,13 +10,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/claudeous/claudeignore/internal/commands"
+	"github.com/claudeous/claudeignore/internal/config"
 	"github.com/claudeous/claudeignore/internal/git"
 	"github.com/claudeous/claudeignore/internal/hooks"
 	"github.com/claudeous/claudeignore/internal/support"
 	"github.com/claudeous/claudeignore/internal/tui"
 )
 
-var version = "dev"
+var version = "0.0.4-alpha"
 
 var menuItems = []tui.MenuItem{
 	{Name: "init", Desc: "Interactive TUI to select what Claude can read"},
@@ -40,17 +41,15 @@ func main() {
 	}
 
 	// No argument → interactive menu
-	root, err := git.RepoRoot()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
-	}
+	root := resolveRootBestEffort()
 
-	if err := commands.Status(root, version, false); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+	if root != "" {
+		if err := commands.Status(root, version, false); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		fmt.Println()
 	}
-	fmt.Println()
 
 	m := tui.NewMenuModel(menuItems, version)
 	p := tea.NewProgram(m)
@@ -74,12 +73,59 @@ func main() {
 	}
 }
 
+// resolveRootBestEffort returns the project root, trying git first then cwd with manual mode state.
+// Returns empty string if no root can be determined.
+func resolveRootBestEffort() string {
+	root, err := git.RepoRoot()
+	if err == nil {
+		return root
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	state := config.LoadState(cwd)
+	if state.Mode == "manual" {
+		return cwd
+	}
+	return ""
+}
+
+// resolveRoot returns the project root for a given command.
+// For init, always falls back to cwd (user may set up manual mode).
+// For other commands, falls back to cwd only if manual mode is already configured.
+func resolveRoot(cmd string) (string, error) {
+	root, err := git.RepoRoot()
+	if err == nil {
+		return root, nil
+	}
+	gitErr := err
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", gitErr
+	}
+
+	// For init, always allow cwd — user might choose manual mode
+	if cmd == "init" {
+		return cwd, nil
+	}
+
+	// For other commands, allow cwd if manual mode is configured
+	state := config.LoadState(cwd)
+	if state.Mode == "manual" {
+		return cwd, nil
+	}
+
+	return "", gitErr
+}
+
 func runCommand(cmd string) error {
 	needsRoot := cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "version" && cmd != "support"
 	var root string
 	if needsRoot {
 		var err error
-		root, err = git.RepoRoot()
+		root, err = resolveRoot(cmd)
 		if err != nil {
 			if cmd == "guard" || cmd == "check" {
 				return nil // hooks fail open

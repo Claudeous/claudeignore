@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
         with:
-          go-version: "1.24"
+          go-version: "1.25"
 
       - uses: anchore/sbom-action/download-syft@e11c554f704a0b820cbf8c51673f6945e0731532 # v0.20.0
 

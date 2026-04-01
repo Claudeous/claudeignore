@@ -17,11 +17,25 @@ func RepoRoot() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("not inside a git repository: %s", msg)
+		}
 		return "", fmt.Errorf("not inside a git repository")
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// HasGit returns true if the given directory is inside a git repository.
+func HasGit(root string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+	cmd.Dir = root
+	return cmd.Run() == nil
 }
 
 // ParseIgnoredOutput extracts ignored paths from `git status --porcelain` output.
