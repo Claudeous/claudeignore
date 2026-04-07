@@ -16,6 +16,7 @@ Modes:
 
 Usage:
   claudeignore init              Interactive setup (choose mode, configure, install hooks)
+  claudeignore view              View files currently blocked from Claude
   claudeignore sync              Apply current rules to sandbox
   claudeignore sync --dry-run    Preview deny list without writing
   claudeignore check             Check if rules changed (for hooks)

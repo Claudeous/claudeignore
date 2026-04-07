@@ -6,6 +6,8 @@
 
 Sync gitignore rules to Claude Code sandbox, blocking file access via **all** tools (Read, Bash, Grep, etc.).
 
+> **Alpha software** — This project is under active development. Features may change, break, or behave unexpectedly. Always verify that your sensitive files are actually blocked after setup (`claudeignore status`, `sync --dry-run`). **You are responsible for checking that protection works correctly in your environment before relying on it.**
+
 ## Why?
 
 Claude Code has no built-in way to block access to gitignored files (`.env`, secrets, etc.). This tool fills that gap by blocking **all** access paths:
