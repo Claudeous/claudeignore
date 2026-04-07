@@ -21,6 +21,7 @@ var version = "0.0.4-alpha"
 
 var menuItems = []tui.MenuItem{
 	{Name: "init", Desc: "Interactive TUI to select what Claude can read"},
+	{Name: "view", Desc: "View files currently blocked from Claude"},
 	{Name: "sync", Desc: "Apply current rules to sandbox"},
 	{Name: "check", Desc: "Check if rules changed (for hooks)"},
 	{Name: "guard", Desc: "Block tool access to denied files (for hooks)"},
@@ -137,6 +138,8 @@ func runCommand(cmd string) error {
 	switch cmd {
 	case "init":
 		return commands.Init(root)
+	case "view":
+		return commands.View(root)
 	case "sync":
 		dryRun := false
 		if len(os.Args) > 2 {
@@ -175,7 +178,7 @@ func runCommand(cmd string) error {
 	case "status":
 		return commands.Status(root, version, true)
 	case "version":
-		fmt.Printf("claudeignore v%s\n", version)
+		fmt.Printf("claudeignore %s\n", version)
 		return nil
 	case "support":
 		if err := support.OpenBrowser(); err != nil {
