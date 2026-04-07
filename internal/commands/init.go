@@ -74,7 +74,7 @@ func Init(root string) error {
 		notignorePath := filepath.Join(root, ".claude.unignore")
 		notignore := config.ReadLines(notignorePath)
 
-		m := tui.NewFilePickerModel(paths, notignore)
+		m := tui.NewFilePickerModel(paths, notignore, root)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		result, err := p.Run()
 		if err != nil {

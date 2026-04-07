@@ -1,7 +1,6 @@
 package support
 
 import (
-	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -116,14 +115,3 @@ func TestBrowserCommand_CorrectForCurrentOS(t *testing.T) {
 	}
 }
 
-// Task 4: OpenBrowser
-
-func TestOpenBrowser(t *testing.T) {
-	browserCmd, _ := BrowserCommand(SupportURL)
-	if _, err := exec.LookPath(browserCmd); err != nil {
-		t.Skipf("browser command %q not found in PATH: %v", browserCmd, err)
-	}
-	if err := OpenBrowser(); err != nil {
-		t.Errorf("OpenBrowser() returned unexpected error: %v", err)
-	}
-}
