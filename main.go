@@ -178,7 +178,7 @@ func runCommand(cmd string) error {
 	case "status":
 		return commands.Status(root, version, true)
 	case "version":
-		fmt.Printf("claudeignore v%s\n", version)
+		fmt.Printf("claudeignore %s\n", version)
 		return nil
 	case "support":
 		if err := support.OpenBrowser(); err != nil {
