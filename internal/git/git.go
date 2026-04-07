@@ -55,22 +55,69 @@ func ParseIgnoredOutput(out []byte) []string {
 	return paths
 }
 
-// GitIgnoredPaths returns paths ignored by .gitignore only.
-func GitIgnoredPaths(root string) ([]string, error) {
+// ListSubmodules returns relative paths of all initialized git submodules.
+// Returns nil (not an error) when there are no submodules or git fails.
+func ListSubmodules(root string) []string {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "status", "--ignored=traditional", "--porcelain")
+	cmd := exec.CommandContext(ctx, "git", "submodule", "--quiet", "foreach", "echo $displaypath")
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git status failed: %w", err)
+		return nil
 	}
-	return ParseIgnoredOutput(out), nil
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths
+}
+
+// gitIgnoredPathsInDir returns ignored paths for a single git directory,
+// prefixing each result with the given prefix (empty for root repo).
+func gitIgnoredPathsInDir(dir, prefix string, extraArgs ...string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer cancel()
+
+	args := append(extraArgs, "status", "--ignored=traditional", "--porcelain")
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // extraArgs are controlled internally (e.g. -c core.excludesFile=path)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git status failed in %s: %w", dir, err)
+	}
+	raw := ParseIgnoredOutput(out)
+	if prefix == "" {
+		return raw, nil
+	}
+	prefixed := make([]string, len(raw))
+	for i, p := range raw {
+		prefixed[i] = prefix + "/" + p
+	}
+	return prefixed, nil
+}
+
+// GitIgnoredPaths returns paths ignored by .gitignore, including inside submodules.
+func GitIgnoredPaths(root string) ([]string, error) {
+	paths, err := gitIgnoredPathsInDir(root, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, sub := range ListSubmodules(root) {
+		subPaths, err := gitIgnoredPathsInDir(filepath.Join(root, sub), sub)
+		if err != nil {
+			continue // skip broken submodules
+		}
+		paths = append(paths, subPaths...)
+	}
+	return paths, nil
 }
 
 // AllIgnoredPaths returns paths ignored by .gitignore + .claude.ignore combined,
-// using git's own pattern engine via core.excludesFile.
+// using git's own pattern engine via core.excludesFile. Includes submodule paths.
 func AllIgnoredPaths(root string) ([]string, error) {
 	claudeignorePath := filepath.Join(root, ".claude.ignore")
 	absPath, err := filepath.Abs(claudeignorePath)
@@ -83,16 +130,19 @@ func AllIgnoredPaths(root string) ([]string, error) {
 		return GitIgnoredPaths(root)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "git", "-c", "core.excludesFile="+absPath, "status", "--ignored=traditional", "--porcelain") //nolint:gosec // absPath is a resolved local file path
-	cmd.Dir = root
-	out, err := cmd.Output()
+	extraArgs := []string{"-c", "core.excludesFile=" + absPath} //nolint:gosec // absPath is a resolved local file path
+	paths, err := gitIgnoredPathsInDir(root, "", extraArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("git status failed: %w", err)
+		return nil, err
 	}
-	return ParseIgnoredOutput(out), nil
+	for _, sub := range ListSubmodules(root) {
+		subPaths, err := gitIgnoredPathsInDir(filepath.Join(root, sub), sub, extraArgs...)
+		if err != nil {
+			continue // skip broken submodules
+		}
+		paths = append(paths, subPaths...)
+	}
+	return paths, nil
 }
 
 // CollapsedPath represents either a single file or a collapsed directory.
