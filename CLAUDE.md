@@ -68,7 +68,7 @@ Hooks are installed in two places:
 ### Key patterns
 
 - TUI uses charmbracelet stack (bubbletea, bubbles, lipgloss) for mode selection, file selection, and main menu
-- Git integration via `git status --ignored=traditional --porcelain` and `git check-ignore`
+- Git integration via `git status --ignored=traditional --porcelain` and `git check-ignore`, with submodule recursion
 - Hook IPC is JSON over stdin/stdout/stderr
 - Path blocking uses prefix matching (denying `dir/` blocks `dir/subfile`)
 
@@ -90,3 +90,4 @@ Hooks are installed in two places:
 - **Guard reads stdin**: when testing `guard` manually, pipe hook JSON via stdin: `echo '{"tool_name":"Read","tool_input":{"file_path":".env"}}' | go run . guard`
 - **Restart required after sync**: sandbox `denyRead` is loaded at Claude Code startup. After `sync`, the `check` hook will remind to restart until the process is newer than the sync timestamp.
 - **Patterns are resolved by git**: `.claude.ignore` and `.claude.unignore` use gitignore syntax and are resolved via `git check-ignore`, not by the Go code directly.
+- **Submodules are enumerated automatically**: `GitIgnoredPaths` and `AllIgnoredPaths` run `git submodule foreach` to discover initialized submodules, then collect ignored files in each one. Paths are prefixed with the submodule's relative path (e.g. `libs/child/.env`). Uninitialized submodules are silently skipped.
