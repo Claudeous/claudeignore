@@ -2,3 +2,6 @@
 
 claudeignore
 dist/
+
+_bmad
+.claude/skills/bmad-*

@@ -101,6 +101,90 @@ func InstallHooksToFile(path string, hooks map[string]interface{}) error {
 	return os.WriteFile(path, append(out, '\n'), 0600)
 }
 
+// InitSbxScript is the content of the sandbox init script
+// that configures Claude Code with bypass permissions + OS-level sandbox.
+const InitSbxScript = `#!/bin/bash
+# claudeignore — Docker Sandbox (sbx) init script
+#
+# Installs claudeignore, syncs rules, installs hooks, and configures
+# Claude Code with bypass permissions + OS-level filesystem protection.
+#
+# Usage (as root, from the workspace root directory):
+#   cd /path/to/your/workspace
+#   sbx exec -u root <sandbox-name> bash $(pwd)/.claude/claudeignore/init-sbx.sh
+#
+# Run once after sandbox creation. The sandbox is persistent.
+
+set -e
+
+WORKSPACE="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# ── Install claudeignore ─────────────────────────────────────────────
+echo "Installing claudeignore..."
+curl -fsSL https://raw.githubusercontent.com/Claudeous/claudeignore/main/install.sh | sh
+
+# ── Configure (as agent user) ───────────────────────────────────────
+su agent -c "cd $WORKSPACE && claudeignore sync && claudeignore install-hook && claudeignore configure-sbx"
+
+echo ""
+echo "Done! claudeignore + sandbox configured."
+echo "  - Guard hook: protects Read/Write/Edit/Grep/NotebookEdit"
+echo "  - Sandbox denyRead: protects Bash (cat, grep, scripts, etc.)"
+echo ""
+echo "Verify with: claudeignore status"
+`
+
+// InitSbxScriptPath returns the path to the init-sbx script.
+func InitSbxScriptPath(root string) string {
+	return filepath.Join(root, ".claude", "claudeignore", "init-sbx.sh")
+}
+
+// WriteInitSbxScript creates the init-sbx script on disk.
+func WriteInitSbxScript(root string) error {
+	scriptPath := InitSbxScriptPath(root)
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0750); err != nil {
+		return fmt.Errorf("cannot create .claude/claudeignore directory: %w", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(InitSbxScript), 0750); err != nil { //nolint:gosec // shell script must be executable
+		return fmt.Errorf("cannot write init-sbx script: %w", err)
+	}
+	return nil
+}
+
+// InstallSandboxSettings merges sandbox settings into a settings file, preserving other keys.
+func InstallSandboxSettings(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		return fmt.Errorf("cannot create directory for %s: %w", path, err)
+	}
+
+	var settings map[string]interface{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		settings = make(map[string]interface{})
+	} else {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			settings = make(map[string]interface{})
+		}
+	}
+
+	settings["defaultMode"] = "bypassPermissions"
+	settings["skipDangerousModePermissionPrompt"] = true
+
+	sandbox, ok := settings["sandbox"].(map[string]interface{})
+	if !ok {
+		sandbox = make(map[string]interface{})
+	}
+	sandbox["enabled"] = true
+	sandbox["autoAllowBashIfSandboxed"] = true
+	settings["sandbox"] = sandbox
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0600)
+}
+
 // OutputHookMessage prints a JSON hook message to stdout.
 func OutputHookMessage(message string) {
 	result := map[string]interface{}{
