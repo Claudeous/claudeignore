@@ -32,6 +32,10 @@ func InstallHook(root string) error {
 		return fmt.Errorf("error writing check-install script: %w", err)
 	}
 
+	if err := hooks.WriteInitSbxScript(root); err != nil {
+		return fmt.Errorf("error writing init-sbx script: %w", err)
+	}
+
 	projectSettingsPath := filepath.Join(root, ".claude", "settings.json")
 	if err := hooks.InstallHooksToFile(projectSettingsPath, hooks.ProjectHooksConfig()); err != nil {
 		return fmt.Errorf("error writing project hooks: %w", err)
