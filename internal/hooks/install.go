@@ -169,10 +169,14 @@ func InstallSandboxSettings(path string) error {
 
 	settings["defaultMode"] = "bypassPermissions"
 	settings["skipDangerousModePermissionPrompt"] = true
-	settings["sandbox"] = map[string]interface{}{
-		"enabled":                  true,
-		"autoAllowBashIfSandboxed": true,
+
+	sandbox, ok := settings["sandbox"].(map[string]interface{})
+	if !ok {
+		sandbox = make(map[string]interface{})
 	}
+	sandbox["enabled"] = true
+	sandbox["autoAllowBashIfSandboxed"] = true
+	settings["sandbox"] = sandbox
 
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
