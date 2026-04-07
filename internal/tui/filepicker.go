@@ -12,42 +12,43 @@ import (
 	"github.com/claudeous/claudeignore/internal/git"
 )
 
-// FileItem represents a file or collapsed directory entry in the picker.
-type FileItem struct {
-	Path     string
-	Checked  bool     // checked = blocked for Claude
-	Count    int      // >0 means collapsed directory
-	Children []string // original paths when collapsed
+const expandThreshold = 20
+
+// FileChild represents an individual file inside a group.
+type FileChild struct {
+	Path    string
+	Checked bool
 }
 
-// IsDir returns true if this item is a collapsed directory.
-func (f FileItem) IsDir() bool {
-	return f.Count > 0
-}
-
-// DisplayPath returns the path to show in the TUI.
-func (f FileItem) DisplayPath() string {
-	if f.IsDir() {
-		return fmt.Sprintf("%s/ (%d files)", f.Path, f.Count)
-	}
-	return f.Path
+// FileGroup represents a directory group or the root files group.
+type FileGroup struct {
+	Name            string // directory name or "" for root files
+	Children        []FileChild
+	Expanded        bool
+	DirectlyIgnored bool // true if the directory itself is gitignored (not just its contents)
 }
 
 // FilePickerModel is the TUI for selecting which files to block.
 type FilePickerModel struct {
-	Items     []FileItem
-	filtered  []int // indices into Items
-	cursor    int
-	filter    textinput.Model
-	Quitting  bool
-	Confirmed bool
-	height    int
-	scrollTop int
+	Groups       []FileGroup
+	initialState [][]bool // [group][child] checked state for restore
+	cursor       int      // position in the flat visible list
+	filter       textinput.Model
+	Quitting     bool
+	Confirmed    bool
+	height       int
+	scrollTop    int
+}
+
+// visibleRow represents one row in the flat visible list.
+type visibleRow struct {
+	groupIdx int
+	childIdx int // -1 means this row is a group header
 }
 
 // NewFilePickerModel creates a file picker with given paths and unignore list.
-// Paths are collapsed by directory when a directory has many files.
-func NewFilePickerModel(paths []string, notignore []string) FilePickerModel {
+// root is the git repo root, used to detect directly ignored directories.
+func NewFilePickerModel(paths []string, notignore []string, root string) FilePickerModel {
 	ti := textinput.New()
 	ti.Placeholder = "Type to filter..."
 	ti.Focus()
@@ -55,69 +56,188 @@ func NewFilePickerModel(paths []string, notignore []string) FilePickerModel {
 
 	notignoreSet := config.NewPathSet(notignore)
 
-	collapsed := git.CollapsePaths(paths)
-	items := make([]FileItem, len(collapsed))
-	for i, cp := range collapsed {
-		checked := true
-		if cp.IsDir() {
-			// A collapsed dir is unchecked only if ALL children are in the unignore list
-			for _, child := range cp.Children {
-				if !config.PathSetContains(notignoreSet, child) {
-					checked = true
-					break
-				}
-				checked = false
-			}
-		} else {
-			checked = !config.PathSetContains(notignoreSet, cp.Path)
-		}
+	// Group files by first directory component
+	groupMap := make(map[string][]string)
+	var groupOrder []string
+	var rootFiles []string
 
-		items[i] = FileItem{
-			Path:     cp.Path,
-			Checked:  checked,
-			Count:    cp.Count,
-			Children: cp.Children,
+	for _, p := range paths {
+		idx := strings.IndexByte(p, '/')
+		if idx == -1 {
+			rootFiles = append(rootFiles, p)
+			continue
+		}
+		dir := p[:idx]
+		if _, seen := groupMap[dir]; !seen {
+			groupOrder = append(groupOrder, dir)
+		}
+		groupMap[dir] = append(groupMap[dir], p)
+	}
+
+	var groups []FileGroup
+
+	// Root files group
+	if len(rootFiles) > 0 {
+		children := make([]FileChild, len(rootFiles))
+		for i, f := range rootFiles {
+			children[i] = FileChild{
+				Path:    f,
+				Checked: !config.PathSetContains(notignoreSet, f),
+			}
+		}
+		groups = append(groups, FileGroup{
+			Name:     "",
+			Children: children,
+			Expanded: true,
+		})
+	}
+
+	// Directory groups
+	for _, dir := range groupOrder {
+		files := groupMap[dir]
+		children := make([]FileChild, len(files))
+		for i, f := range files {
+			children[i] = FileChild{
+				Path:    f,
+				Checked: !config.PathMatchesSet(notignoreSet, f),
+			}
+		}
+		dirIgnored := git.IsDirectoryIgnored(root, dir)
+		expanded := len(files) < expandThreshold
+		if dirIgnored {
+			expanded = false // directly ignored dirs start collapsed
+		}
+		groups = append(groups, FileGroup{
+			Name:            dir,
+			Children:        children,
+			Expanded:        expanded,
+			DirectlyIgnored: dirIgnored,
+		})
+	}
+
+	// Save initial state for restore
+	initial := make([][]bool, len(groups))
+	for i, g := range groups {
+		initial[i] = make([]bool, len(g.Children))
+		for j, c := range g.Children {
+			initial[i][j] = c.Checked
 		}
 	}
 
 	m := FilePickerModel{
-		Items:  items,
-		filter: ti,
-		height: 20,
+		Groups:       groups,
+		initialState: initial,
+		filter:       ti,
+		height:       20,
 	}
-	m.applyFilter()
 	return m
 }
 
-// AllowedPaths returns the list of paths the user unchecked (Claude CAN read).
-// For collapsed directories, returns the directory pattern (e.g. "pdf/")
-// instead of expanding all children — .claude.unignore uses gitignore syntax.
+// AllowedPaths returns unchecked paths (Claude CAN read).
+// For fully unchecked directory groups, returns "dir/" pattern.
+// For individually unchecked files, returns the file path.
 func (m FilePickerModel) AllowedPaths() []string {
 	var allowed []string
-	for _, it := range m.Items {
-		if !it.Checked {
-			if it.IsDir() {
-				allowed = append(allowed, it.Path+"/")
-			} else {
-				allowed = append(allowed, it.Path)
+	for _, g := range m.Groups {
+		if g.Name != "" {
+			allUnchecked := true
+			for _, c := range g.Children {
+				if c.Checked {
+					allUnchecked = false
+					break
+				}
+			}
+			if allUnchecked {
+				allowed = append(allowed, g.Name+"/")
+				continue
+			}
+		}
+		for _, c := range g.Children {
+			if !c.Checked {
+				allowed = append(allowed, c.Path)
 			}
 		}
 	}
 	return allowed
 }
 
-func (m *FilePickerModel) applyFilter() {
+// visibleRows returns the flat list of visible rows based on expand state and filter.
+func (m FilePickerModel) visibleRows() []visibleRow {
 	query := strings.ToLower(m.filter.Value())
-	m.filtered = nil
-	for i, it := range m.Items {
-		if query == "" || strings.Contains(strings.ToLower(it.Path), query) {
-			m.filtered = append(m.filtered, i)
+	var rows []visibleRow
+
+	for gi, g := range m.Groups {
+		hasMatch := false
+		if query == "" {
+			hasMatch = true
+		} else {
+			for _, c := range g.Children {
+				if strings.Contains(strings.ToLower(c.Path), query) {
+					hasMatch = true
+					break
+				}
+			}
+			if g.Name != "" && strings.Contains(strings.ToLower(g.Name), query) {
+				hasMatch = true
+			}
+		}
+		if !hasMatch {
+			continue
+		}
+
+		if g.Name != "" {
+			rows = append(rows, visibleRow{groupIdx: gi, childIdx: -1})
+		}
+
+		if g.Expanded || g.Name == "" {
+			for ci, c := range g.Children {
+				if query != "" && !strings.Contains(strings.ToLower(c.Path), query) {
+					continue
+				}
+				rows = append(rows, visibleRow{groupIdx: gi, childIdx: ci})
+			}
 		}
 	}
-	if m.cursor >= len(m.filtered) {
-		m.cursor = max(0, len(m.filtered)-1)
+
+	return rows
+}
+
+func (m *FilePickerModel) selectAll() {
+	for gi := range m.Groups {
+		for ci := range m.Groups[gi].Children {
+			m.Groups[gi].Children[ci].Checked = true
+		}
 	}
-	m.scrollTop = 0
+}
+
+func (m *FilePickerModel) unselectAll() {
+	for gi := range m.Groups {
+		for ci := range m.Groups[gi].Children {
+			m.Groups[gi].Children[ci].Checked = false
+		}
+	}
+}
+
+func (m *FilePickerModel) restore() {
+	for gi := range m.Groups {
+		for ci := range m.Groups[gi].Children {
+			m.Groups[gi].Children[ci].Checked = m.initialState[gi][ci]
+		}
+	}
+}
+
+func (m *FilePickerModel) toggleGroup(gi int) {
+	g := &m.Groups[gi]
+	anyChecked := false
+	for _, c := range g.Children {
+		if c.Checked {
+			anyChecked = true
+			break
+		}
+	}
+	for ci := range g.Children {
+		g.Children[ci].Checked = !anyChecked
+	}
 }
 
 func (m FilePickerModel) Init() tea.Cmd {
@@ -127,12 +247,14 @@ func (m FilePickerModel) Init() tea.Cmd {
 func (m FilePickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.height = msg.Height - 6
+		m.height = msg.Height - 8
 		if m.height < 5 {
 			m.height = 5
 		}
 
 	case tea.KeyMsg:
+		rows := m.visibleRows()
+
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c", "esc"))):
 			m.Quitting = true
@@ -151,23 +273,52 @@ func (m FilePickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("down"))):
-			if m.cursor < len(m.filtered)-1 {
+			if m.cursor < len(rows)-1 {
 				m.cursor++
 			}
 			if m.cursor >= m.scrollTop+m.height {
 				m.scrollTop = m.cursor - m.height + 1
 			}
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys(" "))):
-			if len(m.filtered) > 0 {
-				idx := m.filtered[m.cursor]
-				m.Items[idx].Checked = !m.Items[idx].Checked
+		case key.Matches(msg, key.NewBinding(key.WithKeys("right"))):
+			if m.cursor < len(rows) {
+				r := rows[m.cursor]
+				if r.childIdx == -1 {
+					m.Groups[r.groupIdx].Expanded = true
+				}
 			}
+
+		case key.Matches(msg, key.NewBinding(key.WithKeys("left"))):
+			if m.cursor < len(rows) {
+				r := rows[m.cursor]
+				if r.childIdx == -1 {
+					m.Groups[r.groupIdx].Expanded = false
+				}
+			}
+
+		case key.Matches(msg, key.NewBinding(key.WithKeys(" "))):
+			if m.cursor < len(rows) {
+				r := rows[m.cursor]
+				if r.childIdx == -1 {
+					m.toggleGroup(r.groupIdx)
+				} else {
+					m.Groups[r.groupIdx].Children[r.childIdx].Checked =
+						!m.Groups[r.groupIdx].Children[r.childIdx].Checked
+				}
+			}
+
+		case msg.String() == "a":
+			m.selectAll()
+
+		case msg.String() == "n":
+			m.unselectAll()
+
+		case msg.String() == "r":
+			m.restore()
 
 		default:
 			var cmd tea.Cmd
 			m.filter, cmd = m.filter.Update(msg)
-			m.applyFilter()
 			return m, cmd
 		}
 	}
@@ -184,61 +335,101 @@ func (m FilePickerModel) View() string {
 
 	b.WriteString(HeaderStyle.Render("claudeignore — Select files to block from Claude Code"))
 	b.WriteString("\n")
-	b.WriteString(DimStyle.Render("[x] = blocked   [ ] = Claude can read   space = toggle   enter = confirm   esc = cancel"))
-	b.WriteString("\n")
 	b.WriteString(m.filter.View())
 	b.WriteString("\n\n")
 
-	if len(m.filtered) == 0 {
+	rows := m.visibleRows()
+
+	if len(rows) == 0 {
 		b.WriteString(DimStyle.Render("  No matches"))
 		b.WriteString("\n")
 	} else {
+		if m.cursor >= len(rows) {
+			m.cursor = len(rows) - 1
+		}
+
 		end := m.scrollTop + m.height
-		if end > len(m.filtered) {
-			end = len(m.filtered)
+		if end > len(rows) {
+			end = len(rows)
 		}
 		for vi := m.scrollTop; vi < end; vi++ {
-			idx := m.filtered[vi]
-			it := m.Items[idx]
+			r := rows[vi]
 
 			cursor := "  "
 			if vi == m.cursor {
 				cursor = "> "
 			}
 
-			display := it.DisplayPath()
-			var line string
-			if it.Checked {
-				line = CheckedStyle.Render("[x] " + display)
+			if r.childIdx == -1 {
+				g := m.Groups[r.groupIdx]
+				arrow := "▸"
+				if g.Expanded {
+					arrow = "▾"
+				}
+
+				checked := 0
+				for _, c := range g.Children {
+					if c.Checked {
+						checked++
+					}
+				}
+
+				var checkbox, label string
+				if checked == len(g.Children) {
+					checkbox = CheckedStyle.Render("[x]")
+					label = CheckedStyle.Render(fmt.Sprintf(" %s %s/ (%d files)", arrow, g.Name, len(g.Children)))
+				} else if checked == 0 {
+					checkbox = UncheckedStyle.Render("[ ]")
+					label = UncheckedStyle.Render(fmt.Sprintf(" %s %s/ (%d files)", arrow, g.Name, len(g.Children)))
+				} else {
+					checkbox = PartialStyle.Render("[\u25CB]")
+					label = PartialStyle.Render(fmt.Sprintf(" %s %s/ (%d/%d blocked)", arrow, g.Name, checked, len(g.Children)))
+				}
+
+				header := checkbox + label
+				if vi == m.cursor {
+					b.WriteString(CursorStyle.Render(cursor) + header)
+				} else {
+					b.WriteString(DimStyle.Render(cursor) + header)
+				}
 			} else {
-				line = UncheckedStyle.Render("[ ] " + display)
+				c := m.Groups[r.groupIdx].Children[r.childIdx]
+				indent := "  "
+				if m.Groups[r.groupIdx].Name != "" {
+					indent = "    "
+				}
+
+				var line string
+				if c.Checked {
+					line = CheckedStyle.Render("[x] " + c.Path)
+				} else {
+					line = UncheckedStyle.Render("[ ] " + c.Path)
+				}
+
+				if vi == m.cursor {
+					b.WriteString(CursorStyle.Render(cursor) + indent + line)
+				} else {
+					b.WriteString(DimStyle.Render(cursor) + indent + line)
+				}
 			}
 
-			if vi == m.cursor {
-				line = CursorStyle.Render(cursor) + line
-			} else {
-				line = DimStyle.Render(cursor) + line
-			}
-
-			b.WriteString(line)
 			b.WriteString("\n")
 		}
 	}
 
-	// Footer: count actual files (expanding collapsed dirs)
 	blocked := 0
 	allowed := 0
-	for _, it := range m.Items {
-		n := 1
-		if it.IsDir() {
-			n = it.Count
-		}
-		if it.Checked {
-			blocked += n
-		} else {
-			allowed += n
+	for _, g := range m.Groups {
+		for _, c := range g.Children {
+			if c.Checked {
+				blocked++
+			} else {
+				allowed++
+			}
 		}
 	}
+	b.WriteString("\n")
+	b.WriteString(DimStyle.Render("  space = toggle   \u2192/\u2190 = expand/collapse   a/n/r = all/none/restore   enter = confirm   esc = cancel"))
 	b.WriteString("\n")
 	b.WriteString(DimStyle.Render(fmt.Sprintf("  %d blocked, %d allowed, %d total", blocked, allowed, blocked+allowed)))
 	b.WriteString("\n")
