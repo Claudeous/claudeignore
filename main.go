@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -122,7 +123,7 @@ func resolveRoot(cmd string) (string, error) {
 }
 
 func runCommand(cmd string) error {
-	needsRoot := cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "version" && cmd != "support"
+	needsRoot := cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "version" && cmd != "support" && cmd != "configure-sbx"
 	var root string
 	if needsRoot {
 		var err error
@@ -175,6 +176,23 @@ func runCommand(cmd string) error {
 		return nil
 	case "install-hook":
 		return commands.InstallHook(root)
+	case "configure-sbx":
+		if os.Getenv("IS_SANDBOX") != "1" {
+			return fmt.Errorf("configure-sbx is intended for Docker sandboxes only (set IS_SANDBOX=1 to override)")
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot find home directory: %w", err)
+		}
+		settingsPath := filepath.Join(home, ".claude", "settings.json")
+		if err := hooks.InstallSandboxSettings(settingsPath); err != nil {
+			return fmt.Errorf("error configuring sandbox settings: %w", err)
+		}
+		fmt.Println("Sandbox settings configured in ~/.claude/settings.json")
+		fmt.Println("  - defaultMode: bypassPermissions")
+		fmt.Println("  - sandbox.enabled: true")
+		fmt.Println("  - autoAllowBashIfSandboxed: true")
+		return nil
 	case "status":
 		return commands.Status(root, version, true)
 	case "version":
