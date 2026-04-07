@@ -137,6 +137,69 @@ The guard fails open by design: if it can't determine the repo root, read settin
 
 Run `claudeignore status`. It shows the current mode, sync state, number of denied entries, and whether hooks are installed. If everything says "up to date" and hooks show "user + project", you're fully protected.
 
+## Docker Sandboxes (sbx)
+
+claudeignore works inside [Docker sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`), but the sandbox configuration must be set correctly to ensure all protection layers are active.
+
+### Protection layers
+
+| Layer | What it blocks | Works without OS sandbox? |
+|-------|---------------|--------------------------|
+| **Sandbox `denyRead`** | All filesystem access (Bash, `cat`, scripts) | No — requires `sandbox.enabled: true` |
+| **Guard hook** | Read, Write, Edit, Grep, NotebookEdit | Yes — runs as long as hooks are invoked |
+| **Check hook** | Nothing (advisory) | Yes |
+
+Without the OS sandbox, the guard hook is the **only** protection. It covers built-in tools but **not** Bash — meaning `cat .env` would bypass it.
+
+### Setup in sandbox
+
+`claudeignore install-hook` generates a ready-to-use init script at `.claude/claudeignore/init-sbx.sh`. Run it once after creating the sandbox:
+
+```bash
+cd /path/to/your/workspace
+sbx exec -u root <sandbox-name> bash $(pwd)/.claude/claudeignore/init-sbx.sh
+```
+
+The script installs claudeignore, syncs rules, installs hooks, and configures the Claude Code sandbox settings.
+
+### Enabling the OS sandbox
+
+`sbx` launches Claude Code using `~/.claude/settings.json` — not CLI flags. To get both bypass permissions (auto-approve tools) **and** filesystem protection (`denyRead` enforced), configure both in settings:
+
+```jsonc
+// ~/.claude/settings.json (inside the sandbox)
+{
+  "defaultMode": "bypassPermissions",
+  "skipDangerousModePermissionPrompt": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "hooks": { /* ... installed by claudeignore install-hook ... */ }
+}
+```
+
+The key settings:
+
+- **`defaultMode: "bypassPermissions"`**: tools auto-approved (no permission prompts)
+- **`skipDangerousModePermissionPrompt`**: skips the bypass mode confirmation (non-interactive)
+- **`sandbox.enabled`**: filesystem restrictions (`denyRead`) enforced at OS level
+- **`autoAllowBashIfSandboxed`**: Bash auto-approved since the sandbox prevents access to denied files
+
+Without `sandbox.enabled`, `denyRead` entries are ignored and only the guard hook protects file access.
+
+### Verify inside the sandbox
+
+```bash
+claudeignore status
+# Check: Sandbox denyRead ✔, Hooks ✔
+
+# Test that Bash-level blocking works
+cat project/.env          # Should fail with permission denied
+```
+
+If `cat` succeeds, the OS sandbox is not active — check that `sandbox.enabled` is `true` in `~/.claude/settings.json`.
+
 ## Support
 
 claudeignore is free and open source, built and maintained by [Claudeous](https://github.com/Claudeous) — an independent developer creating tools for the Claude Code ecosystem, making AI-assisted development safer, one tool at a time.
