@@ -5,9 +5,11 @@ BUILD_DIR=bin
 LINK_PATH=$(HOME)/bin/$(BINARY_NAME)
 DEV_BIN=$(CURDIR)/$(BUILD_DIR)/$(BINARY_NAME)
 BREW_BIN=$(shell brew --prefix 2>/dev/null)/bin/$(BINARY_NAME)
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS=-ldflags "-X main.version=$(VERSION)"
 
 build:
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) .
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) .
 
 ## dev/prod switch — requires ~/bin in PATH
 
