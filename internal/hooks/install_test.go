@@ -90,6 +90,124 @@ func TestUserHooksConfig(t *testing.T) {
 	}
 }
 
+func TestInstallHooksToFile_PreservesOtherHooks(t *testing.T) {
+	t.Run("existing hooks from other tools are preserved", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings.json")
+
+		// Pre-existing hooks from another tool
+		existing := map[string]interface{}{
+			"hooks": map[string]interface{}{
+				"PreToolUse": []interface{}{
+					map[string]interface{}{
+						"matcher": "Bash",
+						"hooks": []interface{}{
+							map[string]interface{}{
+								"type":    "command",
+								"command": "my-other-tool lint",
+							},
+						},
+					},
+				},
+				"PostToolUse": []interface{}{
+					map[string]interface{}{
+						"matcher": "",
+						"hooks": []interface{}{
+							map[string]interface{}{
+								"type":    "command",
+								"command": "my-logger log",
+							},
+						},
+					},
+				},
+			},
+		}
+		data, _ := json.Marshal(existing)
+		os.WriteFile(path, data, 0600)
+
+		err := InstallHooksToFile(path, UserHooksConfig())
+		if err != nil {
+			t.Fatalf("InstallHooksToFile error: %v", err)
+		}
+
+		raw, _ := os.ReadFile(path)
+		var result map[string]interface{}
+		json.Unmarshal(raw, &result)
+
+		hooks := result["hooks"].(map[string]interface{})
+
+		// PostToolUse should be preserved (claudeignore doesn't use it)
+		if hooks["PostToolUse"] == nil {
+			t.Error("PostToolUse from other tool was destroyed")
+		}
+
+		// PreToolUse should have both: other tool's Bash hook + claudeignore's hook
+		preToolUse := hooks["PreToolUse"].([]interface{})
+		if len(preToolUse) < 2 {
+			t.Errorf("expected at least 2 PreToolUse entries, got %d", len(preToolUse))
+		}
+
+		// Check the other tool's hook is still there
+		found := false
+		for _, entry := range preToolUse {
+			m := entry.(map[string]interface{})
+			if m["matcher"] == "Bash" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("other tool's Bash hook was not preserved")
+		}
+	})
+
+	t.Run("reinstall updates claudeignore hooks", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings.json")
+
+		// First install
+		InstallHooksToFile(path, UserHooksConfig())
+		// Second install (should not duplicate)
+		InstallHooksToFile(path, UserHooksConfig())
+
+		raw, _ := os.ReadFile(path)
+		var result map[string]interface{}
+		json.Unmarshal(raw, &result)
+
+		hooks := result["hooks"].(map[string]interface{})
+		preToolUse := hooks["PreToolUse"].([]interface{})
+
+		// Should have exactly 1 PreToolUse entry, not 2
+		if len(preToolUse) != 1 {
+			t.Errorf("expected 1 PreToolUse entry after reinstall, got %d", len(preToolUse))
+		}
+	})
+
+	t.Run("corrupted hooks key handled gracefully", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings.json")
+
+		existing := map[string]interface{}{
+			"hooks": "not-a-map",
+		}
+		data, _ := json.Marshal(existing)
+		os.WriteFile(path, data, 0600)
+
+		err := InstallHooksToFile(path, UserHooksConfig())
+		if err != nil {
+			t.Fatalf("InstallHooksToFile error: %v", err)
+		}
+
+		raw, _ := os.ReadFile(path)
+		var result map[string]interface{}
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatal("output should be valid JSON")
+		}
+		if result["hooks"] == nil {
+			t.Error("hooks should exist after fixing corrupted value")
+		}
+	})
+}
+
 func TestProjectHooksConfig(t *testing.T) {
 	hooks := ProjectHooksConfig()
 

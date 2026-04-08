@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // UserHooksConfig returns the hook configuration for user-scope settings.
@@ -76,7 +77,8 @@ func ProjectHooksConfig() map[string]interface{} {
 	}
 }
 
-// InstallHooksToFile writes hook configuration to a settings file, preserving other keys.
+// InstallHooksToFile writes hook configuration to a settings file, merging
+// claudeignore hooks with any existing hooks from other tools.
 func InstallHooksToFile(path string, hooks map[string]interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return fmt.Errorf("cannot create directory for %s: %w", path, err)
@@ -92,13 +94,82 @@ func InstallHooksToFile(path string, hooks map[string]interface{}) error {
 		}
 	}
 
-	settings["hooks"] = hooks
+	settings["hooks"] = mergeHooks(settings["hooks"], hooks)
 
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(out, '\n'), 0600)
+}
+
+// mergeHooks merges claudeignore hooks into existing hooks, preserving
+// non-claudeignore entries from other tools.
+func mergeHooks(existing interface{}, ours map[string]interface{}) map[string]interface{} {
+	existingMap, ok := existing.(map[string]interface{})
+	if !ok {
+		return ours
+	}
+
+	merged := make(map[string]interface{}, len(existingMap))
+	// Copy all existing hook types
+	for k, v := range existingMap {
+		merged[k] = v
+	}
+	// Merge our hook types
+	for hookType, ourEntries := range ours {
+		ourArr, ok := ourEntries.([]interface{})
+		if !ok {
+			merged[hookType] = ourEntries
+			continue
+		}
+		existArr, ok := merged[hookType].([]interface{})
+		if !ok {
+			merged[hookType] = ourEntries
+			continue
+		}
+		merged[hookType] = mergeHookEntries(existArr, ourArr)
+	}
+	return merged
+}
+
+// mergeHookEntries merges claudeignore entries into an existing hook type array.
+// Claudeignore entries are identified by having a command containing "claudeignore".
+// Existing claudeignore entries are replaced; non-claudeignore entries are preserved.
+func mergeHookEntries(existing, ours []interface{}) []interface{} {
+	// Remove old claudeignore entries from existing
+	var kept []interface{}
+	for _, entry := range existing {
+		if !isClaudeignoreEntry(entry) {
+			kept = append(kept, entry)
+		}
+	}
+	// Append our entries
+	return append(kept, ours...)
+}
+
+// isClaudeignoreEntry checks if a hook entry belongs to claudeignore
+// by looking for "claudeignore" in any hook command string.
+func isClaudeignoreEntry(entry interface{}) bool {
+	m, ok := entry.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	hooks, ok := m["hooks"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, h := range hooks {
+		hm, ok := h.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		cmd, _ := hm["command"].(string)
+		if strings.Contains(cmd, "claudeignore") {
+			return true
+		}
+	}
+	return false
 }
 
 // InitSbxScript is the content of the sandbox init script
