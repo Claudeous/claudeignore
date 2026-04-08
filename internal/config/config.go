@@ -219,7 +219,7 @@ func EnsureClaudeGitignore(root string) error {
 	}
 
 	gitignorePath := filepath.Join(dir, ".gitignore")
-	requiredEntries := []string{"state.json"}
+	requiredEntries := []string{"state.json", "hook-*.log"}
 
 	var existing []string
 	if data, err := os.ReadFile(gitignorePath); err == nil {		for _, line := range strings.Split(string(data), "\n") {
