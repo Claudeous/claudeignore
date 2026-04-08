@@ -130,7 +130,9 @@ func runCommand(cmd string) error {
 		root, err = resolveRoot(cmd)
 		if err != nil {
 			if cmd == "guard" || cmd == "check" {
-				return nil // hooks fail open
+				// Fail open but report the error via hook output
+				hooks.OutputHookMessage(fmt.Sprintf("claudeignore: cannot find repo root: %v", err))
+				return nil
 			}
 			return err
 		}
@@ -154,6 +156,7 @@ func runCommand(cmd string) error {
 	case "check":
 		result, err := hooks.Check(root)
 		if err != nil {
+			hooks.OutputHookMessage(fmt.Sprintf("claudeignore check error: %v", err))
 			return nil
 		}
 		if result != nil {
@@ -164,6 +167,8 @@ func runCommand(cmd string) error {
 	case "guard":
 		guardResult, err := hooks.Guard(root)
 		if err != nil {
+			// Fail open but report the error so users can debug
+			fmt.Fprintf(os.Stderr, `{"error":"claudeignore guard error: %s"}`, err.Error())
 			return nil
 		}
 		if guardResult.Blocked {
