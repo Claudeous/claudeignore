@@ -4,22 +4,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-const logFileName = "hook.log"
-const maxLogSize = 256 * 1024 // 256 KB — rotate when exceeded
+const logPrefix = "hook-"
+const logExt = ".log"
+const maxLogAge = 30 * 24 * time.Hour
 
-// HookLog writes a timestamped entry to .claude/claudeignore/hook.log.
+// HookLog writes a timestamped entry to .claude/claudeignore/hook-YYYY-MM-DD.log.
 // Silently does nothing if the log directory doesn't exist (project not initialized).
+// Cleans up log files older than 30 days.
 func HookLog(root, hook, message string) {
 	logDir := filepath.Join(root, ".claude", "claudeignore")
 	if _, err := os.Stat(logDir); os.IsNotExist(err) {
 		return
 	}
 
-	logPath := filepath.Join(logDir, logFileName)
-	rotateIfNeeded(logPath)
+	logPath := filepath.Join(logDir, logPrefix+time.Now().Format("2006-01-02")+logExt)
 
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -27,8 +29,10 @@ func HookLog(root, hook, message string) {
 	}
 	defer f.Close()
 
-	ts := time.Now().Format("2006-01-02 15:04:05.000")
+	ts := time.Now().Format("15:04:05.000")
 	fmt.Fprintf(f, "[%s] [%s] %s\n", ts, hook, message)
+
+	cleanOldLogs(logDir)
 }
 
 // HookLogError logs an error entry.
@@ -36,14 +40,24 @@ func HookLogError(root, hook string, err error) {
 	HookLog(root, hook, fmt.Sprintf("ERROR: %v", err))
 }
 
-func rotateIfNeeded(path string) {
-	info, err := os.Stat(path)
+func cleanOldLogs(dir string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	if info.Size() > maxLogSize {
-		// Keep .log.old, discard older
-		os.Remove(path + ".old")
-		os.Rename(path, path+".old")
+	cutoff := time.Now().Add(-maxLogAge)
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, logPrefix) || !strings.HasSuffix(name, logExt) {
+			continue
+		}
+		dateStr := strings.TrimPrefix(strings.TrimSuffix(name, logExt), logPrefix)
+		t, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			continue
+		}
+		if t.Before(cutoff) {
+			os.Remove(filepath.Join(dir, name))
+		}
 	}
 }
