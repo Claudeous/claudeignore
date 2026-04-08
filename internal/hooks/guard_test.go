@@ -846,3 +846,78 @@ func TestGuardGrep_DenyOutsideSearchBase(t *testing.T) {
 		t.Error("expected no updatedInput when deny entries are outside search base")
 	}
 }
+
+// --- Glob guard tests ---
+
+func TestGuardGlob_PatternMatchesDenied(t *testing.T) {
+	root := t.TempDir()
+
+	// Create denied file so glob resolution works
+	envFile := filepath.Join(root, ".env")
+	os.WriteFile(envFile, []byte("SECRET=x"), 0600)
+
+	toolInput := map[string]interface{}{
+		"pattern": "**/.env*",
+	}
+	result, err := guardGlob(root, toolInput, []string{".env"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Blocked {
+		t.Error("expected Glob with pattern matching denied file to be blocked")
+	}
+}
+
+func TestGuardGlob_PatternSafe(t *testing.T) {
+	root := t.TempDir()
+	toolInput := map[string]interface{}{
+		"pattern": "**/*.go",
+	}
+	result, err := guardGlob(root, toolInput, []string{".env"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Blocked {
+		t.Error("expected Glob with safe pattern to be allowed")
+	}
+}
+
+func TestGuardGlob_PathDenied(t *testing.T) {
+	root := t.TempDir()
+	toolInput := map[string]interface{}{
+		"path": filepath.Join(root, "secrets"),
+	}
+	result, err := guardGlob(root, toolInput, []string{"secrets"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Blocked {
+		t.Error("expected Glob with denied path to be blocked")
+	}
+}
+
+func TestGuardGlob_NoPatternNoPath(t *testing.T) {
+	root := t.TempDir()
+	toolInput := map[string]interface{}{}
+	result, err := guardGlob(root, toolInput, []string{".env"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Blocked {
+		t.Error("expected Glob with no pattern and no path to be allowed")
+	}
+}
+
+func TestGuardGlob_DirectoryPattern(t *testing.T) {
+	root := t.TempDir()
+	toolInput := map[string]interface{}{
+		"pattern": "secrets/**",
+	}
+	result, err := guardGlob(root, toolInput, []string{"secrets"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Blocked {
+		t.Error("expected Glob with pattern targeting denied directory to be blocked")
+	}
+}

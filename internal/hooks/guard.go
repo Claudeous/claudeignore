@@ -55,6 +55,11 @@ func Guard(root string) (*GuardResult, error) {
 		return guardGrep(root, hookInput.ToolInput, denyList)
 	}
 
+	// Handle Glob — pattern field can reveal file paths (information leak)
+	if hookInput.ToolName == "Glob" {
+		return guardGlob(root, hookInput.ToolInput, denyList)
+	}
+
 	// Extract file path from tool_input (Read, Write, Edit, NotebookEdit, etc.)
 	var targetPath string
 	if fp, ok := hookInput.ToolInput["file_path"].(string); ok {
@@ -304,6 +309,13 @@ func globPatternMatchesDenyList(globPattern string, denyList []string) bool {
 		if matched {
 			return true
 		}
+		// Handle ** patterns (not supported by filepath.Match).
+		// **/<suffix> means "match <suffix> at any depth".
+		if strings.Contains(globPattern, "**") {
+			if doubleStarMatchesDeny(globPattern, denyNorm) {
+				return true
+			}
+		}
 		// Check if the glob targets a denied directory
 		// e.g., glob "secrets/*" and deny "secrets"
 		if strings.HasSuffix(globPattern, "/*") || strings.HasSuffix(globPattern, "/**") {
@@ -318,6 +330,76 @@ func globPatternMatchesDenyList(globPattern string, denyList []string) bool {
 		}
 	}
 	return false
+}
+
+// doubleStarMatchesDeny checks if a ** glob pattern could match a deny entry.
+// E.g. **/.env* matches .env, dir/.env.production; src/**/*.go matches src/pkg/file.go.
+func doubleStarMatchesDeny(pattern, deny string) bool {
+	// Split on ** to get prefix and suffix parts
+	parts := strings.SplitN(pattern, "**", 2)
+	prefix := strings.TrimSuffix(parts[0], "/")
+	suffix := ""
+	if len(parts) > 1 {
+		suffix = strings.TrimPrefix(parts[1], "/")
+	}
+
+	// Check prefix constraint: if pattern has a prefix (e.g. src/**)
+	// the deny entry must start with that prefix
+	if prefix != "" && !strings.HasPrefix(deny, prefix+"/") && deny != prefix {
+		return false
+	}
+
+	// Check suffix constraint: match against the basename or tail of deny
+	if suffix == "" {
+		return true // pattern like "src/**" matches anything under src
+	}
+
+	// Try matching suffix against basename of deny
+	base := filepath.Base(deny)
+	if matched, _ := filepath.Match(suffix, base); matched {
+		return true
+	}
+
+	// Try matching suffix against the deny path tail (for nested suffixes)
+	if matched, _ := filepath.Match(suffix, deny); matched {
+		return true
+	}
+
+	return false
+}
+
+// guardGlob handles the Glob tool. Although Glob only returns file paths (not
+// content), revealing the existence of files like .env.production or
+// secrets/aws-keys.json is an information leak.
+func guardGlob(root string, toolInput map[string]interface{}, denyList []string) (*GuardResult, error) {
+	// Check explicit path if provided
+	if targetPath, ok := toolInput["path"].(string); ok && targetPath != "" {
+		blocked, reason, err := CheckPathBlocked(root, targetPath, denyList)
+		if err != nil {
+			return &GuardResult{}, nil
+		}
+		if blocked {
+			return &GuardResult{Blocked: true, Reason: reason}, nil
+		}
+	}
+
+	// Check pattern against deny list
+	pattern, hasPattern := toolInput["pattern"].(string)
+	if !hasPattern || pattern == "" {
+		return &GuardResult{}, nil
+	}
+
+	if globIntersectsDenyList(root, pattern, denyList) {
+		reason := "[claudeignore] Access denied: Glob pattern matches denied files"
+		return &GuardResult{Blocked: true, Reason: reason}, nil
+	}
+
+	if globPatternMatchesDenyList(pattern, denyList) {
+		reason := "[claudeignore] Access denied: Glob pattern matches denied files"
+		return &GuardResult{Blocked: true, Reason: reason}, nil
+	}
+
+	return &GuardResult{}, nil
 }
 
 // CheckPathBlocked tests whether a given path is blocked by the deny list.
