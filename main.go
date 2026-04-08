@@ -130,7 +130,6 @@ func runCommand(cmd string) error {
 		root, err = resolveRoot(cmd)
 		if err != nil {
 			if cmd == "guard" || cmd == "check" {
-				// Fail open but report the error via hook output
 				hooks.OutputHookMessage(fmt.Sprintf("claudeignore: cannot find repo root: %v", err))
 				return nil
 			}
@@ -154,28 +153,35 @@ func runCommand(cmd string) error {
 		}
 		return commands.Sync(root, dryRun)
 	case "check":
+		hooks.HookLog(root, "check", "started")
 		result, err := hooks.Check(root)
 		if err != nil {
+			hooks.HookLogError(root, "check", err)
 			hooks.OutputHookMessage(fmt.Sprintf("claudeignore check error: %v", err))
 			return nil
 		}
 		if result != nil {
 			msg := hooks.FormatCheckMessage(result)
+			hooks.HookLog(root, "check", fmt.Sprintf("result: %s", msg))
 			hooks.OutputHookMessage(msg)
+		} else {
+			hooks.HookLog(root, "check", "up to date")
 		}
 		return nil
 	case "guard":
 		guardResult, err := hooks.Guard(root)
 		if err != nil {
-			// Fail open but report the error so users can debug
+			hooks.HookLogError(root, "guard", err)
 			fmt.Fprintf(os.Stderr, `{"error":"claudeignore guard error: %s"}`, err.Error())
 			return nil
 		}
 		if guardResult.Blocked {
+			hooks.HookLog(root, "guard", fmt.Sprintf("blocked: %s", guardResult.Reason))
 			fmt.Fprintln(os.Stderr, string(hooks.GuardDenyResponse(guardResult.Reason)))
 			os.Exit(2)
 		}
 		if guardResult.UpdatedInput != nil {
+			hooks.HookLog(root, "guard", "injected exclusion glob")
 			fmt.Println(string(guardResult.UpdatedInput))
 		}
 		return nil
