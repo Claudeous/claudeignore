@@ -12,7 +12,7 @@ func UserHooksConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"PreToolUse": []interface{}{
 			map[string]interface{}{
-				"matcher": "Read|Write|Edit|Grep|NotebookEdit",
+				"matcher": "Read|Write|Edit|Grep|Glob|NotebookEdit",
 				"hooks": []interface{}{
 					map[string]interface{}{
 						"type":    "command",
