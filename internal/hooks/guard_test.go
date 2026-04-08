@@ -608,6 +608,95 @@ func TestBuildUpdatedInputJSON(t *testing.T) {
 	}
 }
 
+// TestGuard_ReadsStdin verifies that the Guard function reads hook input from
+// os.Stdin (via io.ReadAll) rather than /dev/stdin. This is the critical fix
+// for Windows compatibility — /dev/stdin does not exist on Windows, causing
+// the guard to silently fail-open with no file protection.
+func TestGuard_ReadsStdin(t *testing.T) {
+	root := t.TempDir()
+
+	// Create settings.local.json with a deny list
+	settingsDir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(settingsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	settingsJSON := `{"sandbox":{"filesystem":{"denyRead":[".env","secrets"]}}}`
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.local.json"), []byte(settingsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Prepare hook input JSON (simulates what Claude Code pipes into stdin)
+	hookInput := `{"tool_name":"Read","tool_input":{"file_path":"` + filepath.Join(root, ".env") + `"}}`
+
+	// Replace os.Stdin with a pipe containing our hook input
+	origStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	// Write the hook input and close the write end so ReadAll returns
+	if _, err := w.WriteString(hookInput); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	result, err := Guard(root)
+	if err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+
+	if !result.Blocked {
+		t.Error("expected Guard to block .env access, but it allowed it — stdin reading may be broken")
+	}
+	if result.Reason == "" {
+		t.Error("expected a deny reason, got empty string")
+	}
+}
+
+// TestGuard_ReadsStdin_AllowedFile verifies that allowed files pass through
+// when stdin is read correctly.
+func TestGuard_ReadsStdin_AllowedFile(t *testing.T) {
+	root := t.TempDir()
+
+	// Create settings.local.json with a deny list
+	settingsDir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(settingsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	settingsJSON := `{"sandbox":{"filesystem":{"denyRead":[".env","secrets"]}}}`
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.local.json"), []byte(settingsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Request an allowed file
+	hookInput := `{"tool_name":"Read","tool_input":{"file_path":"` + filepath.Join(root, "main.go") + `"}}`
+
+	origStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	if _, err := w.WriteString(hookInput); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	result, err := Guard(root)
+	if err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Error("expected Guard to allow main.go access, but it blocked it")
+	}
+}
+
 func TestBuildUpdatedInputJSON_EmptyDenyList(t *testing.T) {
 	toolInput := map[string]interface{}{
 		"pattern": "test",

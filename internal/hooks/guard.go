@@ -3,6 +3,7 @@ package hooks
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +33,11 @@ func Guard(root string) (*GuardResult, error) {
 		return &GuardResult{}, nil
 	}
 
-	// Read hook input from stdin
-	input, err := os.ReadFile("/dev/stdin")
+	// Read hook input from stdin.
+	// Uses io.ReadAll(os.Stdin) instead of os.ReadFile("/dev/stdin") for
+	// cross-platform compatibility — /dev/stdin does not exist on Windows,
+	// which caused the guard to silently fail-open with no protection.
+	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return &GuardResult{}, nil // can't read stdin, allow
 	}
