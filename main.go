@@ -123,6 +123,24 @@ func resolveRoot(cmd string) (string, error) {
 }
 
 func runCommand(cmd string) error {
+	// When invoked as a Claude Code hook, the process cwd may not be the
+	// project root: Claude can change directory via /cd or via the Bash
+	// tool's persistent shell, and any subsequent hook is launched from
+	// that new directory. If the new cwd happens to be a sub-repo, plain
+	// `git rev-parse --show-toplevel` resolves to the wrong root and the
+	// hook silently fails to find .claude/claudeignore/.
+	//
+	// Claude Code always exports CLAUDE_PROJECT_DIR pointing at the
+	// original project directory where the user launched claude. Honor it
+	// for hook commands so all downstream resolution (git root, state
+	// file, log file) is anchored to the right place. Best-effort: if the
+	// chdir fails we fall back to the inherited cwd.
+	if cmd == "check" || cmd == "guard" {
+		if dir := os.Getenv("CLAUDE_PROJECT_DIR"); dir != "" {
+			_ = os.Chdir(dir)
+		}
+	}
+
 	needsRoot := cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "version" && cmd != "support" && cmd != "configure-sbx"
 	var root string
 	if needsRoot {
@@ -171,8 +189,13 @@ func runCommand(cmd string) error {
 	case "guard":
 		guardResult, err := hooks.Guard(root)
 		if err != nil {
+			// Guard MUST fail open (see CLAUDE.md gotchas). We report the
+			// error via the standard hook message envelope (stdout JSON),
+			// never via a deny response, and always return nil so the process
+			// exits 0. Using OutputHookMessage (which uses json.Marshal)
+			// ensures the error text is properly escaped.
 			hooks.HookLogError(root, "guard", err)
-			fmt.Fprintf(os.Stderr, `{"error":"claudeignore guard error: %s"}`, err.Error())
+			hooks.OutputHookMessage(fmt.Sprintf("claudeignore guard error: %v", err))
 			return nil
 		}
 		if guardResult.Blocked {
