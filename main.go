@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,7 +149,11 @@ func runCommand(cmd string) error {
 		root, err = resolveRoot(cmd)
 		if err != nil {
 			if cmd == "guard" || cmd == "check" {
-				hooks.OutputHookMessage(fmt.Sprintf("claudeignore: cannot find repo root: %v", err))
+				if errors.Is(err, git.ErrNotGitRepo) {
+					hooks.WarnNotGitRepoOnce()
+				} else {
+					hooks.OutputHookMessage(fmt.Sprintf("claudeignore: cannot find repo root: %v", err))
+				}
 				return nil
 			}
 			return err
