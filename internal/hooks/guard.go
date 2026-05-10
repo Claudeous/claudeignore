@@ -55,6 +55,11 @@ func Guard(root string) (*GuardResult, error) {
 		return guardGrep(root, hookInput.ToolInput, denyList)
 	}
 
+	// Handle Glob — pattern field can reveal file paths (information leak)
+	if hookInput.ToolName == "Glob" {
+		return guardGlob(root, hookInput.ToolInput, denyList)
+	}
+
 	// Extract file path from tool_input (Read, Write, Edit, NotebookEdit, etc.)
 	var targetPath string
 	if fp, ok := hookInput.ToolInput["file_path"].(string); ok {
@@ -496,6 +501,40 @@ func buildUpdatedInputWithUserGlob(root, searchBase string, toolInput map[string
 	}
 
 	return json.Marshal(output)
+}
+
+// guardGlob handles the Glob tool. Although Glob only returns file paths (not
+// content), revealing the existence of files like .env.production or
+// secrets/aws-keys.json is an information leak.
+func guardGlob(root string, toolInput map[string]interface{}, denyList []string) (*GuardResult, error) {
+	// Check explicit path if provided
+	if targetPath, ok := toolInput["path"].(string); ok && targetPath != "" {
+		blocked, reason, err := CheckPathBlocked(root, targetPath, denyList)
+		if err != nil {
+			return &GuardResult{}, nil
+		}
+		if blocked {
+			return &GuardResult{Blocked: true, Reason: reason}, nil
+		}
+	}
+
+	// Check pattern against deny list
+	pattern, hasPattern := toolInput["pattern"].(string)
+	if !hasPattern || pattern == "" {
+		return &GuardResult{}, nil
+	}
+
+	if globIntersectsDenyList(root, pattern, denyList) {
+		reason := "[claudeignore] Access denied: Glob pattern matches denied files"
+		return &GuardResult{Blocked: true, Reason: reason}, nil
+	}
+
+	if globPatternMatchesDenyList(pattern, denyList) {
+		reason := "[claudeignore] Access denied: Glob pattern matches denied files"
+		return &GuardResult{Blocked: true, Reason: reason}, nil
+	}
+
+	return &GuardResult{}, nil
 }
 
 // CheckPathBlocked tests whether a given path is blocked by the deny list.
