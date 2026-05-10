@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -400,6 +401,268 @@ func TestGuardGrep_NoPathGlobNoIntersection(t *testing.T) {
 	}
 }
 
+func TestDoubleStarMatches(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		path    string
+		matches bool
+	}{
+		{
+			name:    "**/*.go matches top-level .go file",
+			pattern: "**/*.go",
+			path:    "main.go",
+			matches: true,
+		},
+		{
+			name:    "**/*.go matches nested .go file",
+			pattern: "**/*.go",
+			path:    "secrets/keys.go",
+			matches: true,
+		},
+		{
+			name:    "**/*.go matches deeply nested .go file",
+			pattern: "**/*.go",
+			path:    "a/b/c/file.go",
+			matches: true,
+		},
+		{
+			name:    "**/*.go does not match .txt file",
+			pattern: "**/*.go",
+			path:    "file.txt",
+			matches: false,
+		},
+		{
+			name:    "src/**/*.go matches nested under src",
+			pattern: "src/**/*.go",
+			path:    "src/internal/secret.go",
+			matches: true,
+		},
+		{
+			name:    "src/**/*.go does not match outside src",
+			pattern: "src/**/*.go",
+			path:    "lib/file.go",
+			matches: false,
+		},
+		{
+			name:    "**/.env matches top-level .env",
+			pattern: "**/.env",
+			path:    ".env",
+			matches: true,
+		},
+		{
+			name:    "**/.env matches nested .env",
+			pattern: "**/.env",
+			path:    "config/.env",
+			matches: true,
+		},
+		{
+			name:    "**/prod matches nested dir",
+			pattern: "**/prod",
+			path:    "config/prod",
+			matches: true,
+		},
+		{
+			name:    "config/** matches anything under config",
+			pattern: "config/**",
+			path:    "config/prod",
+			matches: true,
+		},
+		{
+			name:    "config/** matches deeply nested under config",
+			pattern: "config/**",
+			path:    "config/a/b/c",
+			matches: true,
+		},
+		{
+			name:    "empty path",
+			pattern: "**/*.go",
+			path:    "",
+			matches: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := doubleStarMatches(tt.pattern, tt.path)
+			if result != tt.matches {
+				t.Errorf("doubleStarMatches(%q, %q) = %v, want %v",
+					tt.pattern, tt.path, result, tt.matches)
+			}
+		})
+	}
+}
+
+func TestGuardGrep_DoubleStarGlobBypass(t *testing.T) {
+	// This is the core test for the security fix: a **/*.go glob should NOT
+	// silently allow when there are denied .go files that ripgrep would match.
+	root := t.TempDir()
+	root, _ = filepath.EvalSymlinks(root)
+
+	denyList := []string{"secrets/keys.go", ".env"}
+
+	// Create the denied file so it exists on disk
+	if err := os.MkdirAll(filepath.Join(root, "secrets"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secrets", "keys.go"), []byte("package secrets"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	toolInput := map[string]interface{}{
+		"pattern": "API_KEY",
+		"glob":    "**/*.go",
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The glob **/*.go WOULD match secrets/keys.go via ripgrep.
+	// The fix should either block or inject exclusion globs.
+	// Since **/*.go is a broad double-star pattern, we expect exclusion
+	// globs to be injected via updatedInput.
+	if result.Blocked {
+		// Blocking is also acceptable (detection found the intersection)
+		return
+	}
+
+	// If not blocked, must have updatedInput with exclusion globs
+	if result.UpdatedInput == nil {
+		t.Fatal("SECURITY BUG: **/*.go glob was allowed without exclusion globs, " +
+			"secrets/keys.go would be readable via ripgrep")
+	}
+
+	// Verify the updatedInput contains exclusion patterns
+	var output map[string]interface{}
+	if err := json.Unmarshal(result.UpdatedInput, &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	hookOutput := output["hookSpecificOutput"].(map[string]interface{})
+	updatedInput := hookOutput["updatedInput"].(map[string]interface{})
+	glob := updatedInput["glob"].(string)
+
+	// The combined glob should include the user's pattern AND exclusions
+	if !strings.Contains(glob, "**/*.go") {
+		t.Errorf("updatedInput glob should preserve user's **/*.go pattern, got %q", glob)
+	}
+	if !strings.Contains(glob, "!") {
+		t.Errorf("updatedInput glob should contain exclusion patterns, got %q", glob)
+	}
+}
+
+func TestGuardGrep_DoubleStarGlobNoExclusion(t *testing.T) {
+	// When **/*.txt doesn't match any denied files (no .txt in deny list)
+	// AND denied entries are outside the search scope, allow without injection.
+	root := t.TempDir()
+	root, _ = filepath.EvalSymlinks(root)
+
+	// Denied entries are in a completely different area
+	srcDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(srcDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(srcDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	denyList := []string{".env", "config/secrets.yaml"}
+
+	toolInput := map[string]interface{}{
+		"pattern": "func",
+		"glob":    "**/*.go",
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not be blocked (no .go files in deny list)
+	if result.Blocked {
+		t.Error("expected not blocked for **/*.go when no .go files are denied")
+	}
+
+	// When run from src/ subdirectory, .env and config/secrets.yaml are outside
+	// the search base, so BuildExclusionGlob returns "" and updatedInput is nil.
+	// This is acceptable because ripgrep scoped to src/ won't reach them anyway.
+}
+
+func TestGuardGrep_DoubleStarGlobWithDeniedExtensionMatch(t *testing.T) {
+	// src/**/*.go with src/internal/secret.go denied should detect intersection
+	root := t.TempDir()
+	root, _ = filepath.EvalSymlinks(root)
+
+	denyList := []string{"src/internal/secret.go"}
+
+	if err := os.MkdirAll(filepath.Join(root, "src", "internal"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "internal", "secret.go"), []byte("package internal"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	toolInput := map[string]interface{}{
+		"pattern": "password",
+		"glob":    "src/**/*.go",
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be blocked (intersection detected) or have exclusion globs injected
+	if !result.Blocked && result.UpdatedInput == nil {
+		t.Fatal("SECURITY BUG: src/**/*.go should be blocked or have exclusion globs " +
+			"when src/internal/secret.go is denied")
+	}
+}
+
+func TestGuardGrep_SingleStarGlobUnchanged(t *testing.T) {
+	// Verify that single-star globs (e.g. *.go) still work as before
+	root := t.TempDir()
+	denyList := []string{".env", "secrets"}
+
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	toolInput := map[string]interface{}{
+		"pattern": "func",
+		"glob":    "*.go",
+	}
+
+	result, err := guardGrep(root, toolInput, denyList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Blocked {
+		t.Error("expected not blocked for *.go with no .go files in deny list")
+	}
+	// Single-star globs should NOT get updatedInput (no double-star defense)
+	if result.UpdatedInput != nil {
+		t.Error("expected no updatedInput for single-star glob without intersection")
+	}
+}
+
 func TestGuardGrep_PathIsParent(t *testing.T) {
 	root := t.TempDir()
 	denyList := []string{"config/prod", ".env"}
@@ -515,6 +778,37 @@ func TestGlobPatternMatchesDenyList(t *testing.T) {
 			name:    "glob matches denied nested path",
 			glob:    "config/prod",
 			matches: true,
+		},
+		// Double-star patterns — the core of the bypass fix
+		{
+			name:    "double-star glob matches denied file by extension",
+			glob:    "**/*.env",
+			matches: true, // should match ".env"
+		},
+		{
+			name:    "double-star glob matches denied nested path",
+			glob:    "**/prod",
+			matches: true, // should match "config/prod"
+		},
+		{
+			name:    "double-star glob with prefix matches denied nested path",
+			glob:    "config/**",
+			matches: true, // should match "config/prod"
+		},
+		{
+			name:    "double-star glob no match",
+			glob:    "**/*.txt",
+			matches: false, // no .txt in deny list
+		},
+		{
+			name:    "double-star glob matches file inside denied dir",
+			glob:    "**/*.go",
+			matches: false, // "secrets" has no extension; .env is not .go
+		},
+		{
+			name:    "double-star with denied dir match",
+			glob:    "**/secrets",
+			matches: true, // exact match of "secrets"
 		},
 	}
 

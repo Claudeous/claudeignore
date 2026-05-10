@@ -128,6 +128,23 @@ func guardGrep(root string, toolInput map[string]interface{}, denyList []string)
 			reason := "[claudeignore] Access denied: Grep glob pattern matches denied files"
 			return &GuardResult{Blocked: true, Reason: reason}, nil
 		}
+
+		// Even when intersection check passes, inject exclusion globs if the
+		// glob contains "**" (double-star). Go's filepath.Match/Glob do not
+		// support "**", so the intersection check above may produce false
+		// negatives — e.g. "**/*.go" would not match "secrets/keys.go" even
+		// though ripgrep WOULD match it. By injecting exclusion globs we
+		// ensure denied files are filtered out regardless.
+		if containsDoubleStar(existingGlob) {
+			updatedJSON, err := buildUpdatedInputWithUserGlob(root, searchBase, toolInput, existingGlob, denyList)
+			if err != nil {
+				return &GuardResult{}, nil // fail open
+			}
+			if updatedJSON != nil {
+				return &GuardResult{UpdatedInput: updatedJSON}, nil
+			}
+		}
+
 		return &GuardResult{}, nil
 	}
 
@@ -304,6 +321,18 @@ func globPatternMatchesDenyList(globPattern string, denyList []string) bool {
 		if matched {
 			return true
 		}
+
+		// Handle "**" (double-star) patterns that filepath.Match cannot resolve.
+		// "**" matches zero or more directory levels, so we expand the check:
+		//   - "**/<tail>" can match any denied path whose suffix matches <tail>
+		//   - "<prefix>/**" can match anything under <prefix>
+		//   - "<prefix>/**/<tail>" combines both
+		if containsDoubleStar(globPattern) {
+			if doubleStarMatches(globPattern, denyNorm) {
+				return true
+			}
+		}
+
 		// Check if the glob targets a denied directory
 		// e.g., glob "secrets/*" and deny "secrets"
 		if strings.HasSuffix(globPattern, "/*") || strings.HasSuffix(globPattern, "/**") {
@@ -318,6 +347,155 @@ func globPatternMatchesDenyList(globPattern string, denyList []string) bool {
 		}
 	}
 	return false
+}
+
+// containsDoubleStar returns true if the pattern contains "**".
+func containsDoubleStar(pattern string) bool {
+	return strings.Contains(pattern, "**")
+}
+
+// doubleStarMatches checks whether a glob containing "**" could match a given
+// path. It splits the pattern on "**" segments and verifies that:
+//   - everything before the first "**" is a prefix of the path
+//   - everything after the last "**" matches a suffix of the path
+//   - intermediate segments appear in order within the path
+//
+// Individual segments are matched with filepath.Match against corresponding
+// path components.
+func doubleStarMatches(pattern, path string) bool {
+	if path == "" {
+		return false
+	}
+
+	// Split pattern on "**" boundaries. Between each pair of "**" there is a
+	// literal segment that must appear in order in the path.
+	segments := strings.Split(pattern, "**")
+
+	// Clean up leading/trailing slashes on each segment.
+	for i := range segments {
+		segments[i] = strings.Trim(segments[i], "/")
+	}
+
+	pathParts := strings.Split(path, "/")
+
+	// Try matching the first (prefix) segment.
+	prefix := segments[0]
+	startIdx := 0
+	if prefix != "" {
+		prefixParts := strings.Split(prefix, "/")
+		if len(prefixParts) > len(pathParts) {
+			return false
+		}
+		for i, pp := range prefixParts {
+			ok, err := filepath.Match(pp, pathParts[i])
+			if err != nil || !ok {
+				return false
+			}
+		}
+		startIdx = len(prefixParts)
+	}
+
+	// Try matching the last (suffix) segment.
+	suffix := segments[len(segments)-1]
+	endIdx := len(pathParts)
+	if suffix != "" {
+		suffixParts := strings.Split(suffix, "/")
+		if len(suffixParts) > endIdx-startIdx {
+			return false
+		}
+		for i, sp := range suffixParts {
+			pathIdx := len(pathParts) - len(suffixParts) + i
+			if pathIdx < startIdx {
+				return false
+			}
+			ok, err := filepath.Match(sp, pathParts[pathIdx])
+			if err != nil || !ok {
+				return false
+			}
+		}
+		endIdx = len(pathParts) - len(suffixParts)
+	}
+
+	// Match any intermediate segments (between consecutive "**") in order.
+	remaining := pathParts[startIdx:endIdx]
+	for _, seg := range segments[1 : len(segments)-1] {
+		if seg == "" {
+			continue // consecutive "**"
+		}
+		segParts := strings.Split(seg, "/")
+		found := false
+		for i := 0; i <= len(remaining)-len(segParts); i++ {
+			allMatch := true
+			for j, sp := range segParts {
+				ok, err := filepath.Match(sp, remaining[i+j])
+				if err != nil || !ok {
+					allMatch = false
+					break
+				}
+			}
+			if allMatch {
+				remaining = remaining[i+len(segParts):]
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	return true
+}
+
+// buildUpdatedInputWithUserGlob constructs updatedInput JSON that preserves
+// the user's original glob while also adding exclusion patterns for denied
+// files. Ripgrep's --glob flag is additive, but Claude Code's Grep tool only
+// accepts a single "glob" string. We combine them using ripgrep's brace
+// syntax: "{user_glob,!denied1,!denied2}".
+// Returns nil (not an error) when there are no deny entries in scope.
+func buildUpdatedInputWithUserGlob(root, searchBase string, toolInput map[string]interface{}, userGlob string, denyList []string) (json.RawMessage, error) {
+	exclusionGlob := BuildExclusionGlob(root, searchBase, denyList)
+	if exclusionGlob == "" {
+		return nil, nil // no deny entries in scope, nothing to inject
+	}
+
+	// Build a combined glob: include user pattern + exclude denied paths.
+	// Strip the leading "!" from exclusion parts so we can wrap them in a
+	// single brace group, e.g. "{**/*.go,!.env,!secrets/**}".
+	var exclusionParts []string
+	inner := exclusionGlob
+	if strings.HasPrefix(inner, "!{") && strings.HasSuffix(inner, "}") {
+		// Multiple exclusions: "!{.env,secrets/**}" -> ".env,secrets/**"
+		inner = inner[2 : len(inner)-1]
+		for _, p := range strings.Split(inner, ",") {
+			exclusionParts = append(exclusionParts, "!"+p)
+		}
+	} else if strings.HasPrefix(inner, "!") {
+		// Single exclusion: "!.env"
+		exclusionParts = append(exclusionParts, inner)
+	}
+
+	if len(exclusionParts) == 0 {
+		return nil, nil
+	}
+
+	combinedGlob := "{" + userGlob + "," + strings.Join(exclusionParts, ",") + "}"
+
+	updatedInput := make(map[string]interface{}, len(toolInput)+1)
+	for k, v := range toolInput {
+		updatedInput[k] = v
+	}
+	updatedInput["glob"] = combinedGlob
+
+	output := map[string]interface{}{
+		"hookSpecificOutput": map[string]interface{}{
+			"hookEventName":      "PreToolUse",
+			"permissionDecision": "allow",
+			"updatedInput":       updatedInput,
+		},
+	}
+
+	return json.Marshal(output)
 }
 
 // CheckPathBlocked tests whether a given path is blocked by the deny list.
