@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,11 @@ import (
 )
 
 const cmdTimeout = 15 * time.Second
+
+// ErrNotGitRepo is returned when the current directory is not inside a git
+// repository. Callers can use errors.Is(err, git.ErrNotGitRepo) to handle
+// this case specifically (e.g. hooks running from a non-repo directory).
+var ErrNotGitRepo = errors.New("not inside a git repository")
 
 // RepoRoot returns the absolute path to the git repository root.
 func RepoRoot() (string, error) {
@@ -22,9 +28,9 @@ func RepoRoot() (string, error) {
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg != "" {
-			return "", fmt.Errorf("not inside a git repository: %s", msg)
+			return "", fmt.Errorf("%w: %s", ErrNotGitRepo, msg)
 		}
-		return "", fmt.Errorf("not inside a git repository")
+		return "", ErrNotGitRepo
 	}
 	return strings.TrimSpace(string(out)), nil
 }
