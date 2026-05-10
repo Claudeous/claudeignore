@@ -41,7 +41,7 @@ func InstallHook(root string) error {
 		return fmt.Errorf("error writing project hooks: %w", err)
 	}
 	fmt.Println("Project hooks installed in .claude/settings.json")
-	fmt.Println("  - UserPromptSubmit: .claude/claudeignore/check-install.sh")
+	fmt.Println("  - UserPromptSubmit: $CLAUDE_PROJECT_DIR/.claude/claudeignore/check-install.sh")
 
 	fmt.Println()
 	fmt.Println("Restart Claude Code to apply.")

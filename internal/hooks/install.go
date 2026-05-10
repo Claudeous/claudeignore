@@ -67,8 +67,12 @@ func ProjectHooksConfig() map[string]interface{} {
 				"matcher": "",
 				"hooks": []interface{}{
 					map[string]interface{}{
-						"type":    "command",
-						"command": ".claude/claudeignore/check-install.sh",
+						"type": "command",
+						// Anchor to CLAUDE_PROJECT_DIR so the hook still resolves
+						// after Claude Code changes cwd (via /cd or the Bash tool's
+						// persistent shell). A bare relative path would fail with
+						// "No such file or directory" from the new cwd.
+						"command": `"$CLAUDE_PROJECT_DIR/.claude/claudeignore/check-install.sh"`,
 					},
 				},
 			},
