@@ -124,6 +124,11 @@ func GitIgnoredPaths(root string) ([]string, error) {
 
 // AllIgnoredPaths returns paths ignored by .gitignore + .claude.ignore combined,
 // using git's own pattern engine via core.excludesFile. Includes submodule paths.
+//
+// .claude.ignore is also resolved against tracked files via a filesystem walk,
+// because `git status --ignored` only lists untracked-ignored files. A pattern
+// in .claude.ignore matching a tracked file must still appear in the deny list
+// (the user wrote it there intentionally to block Claude from reading it).
 func AllIgnoredPaths(root string) ([]string, error) {
 	claudeignorePath := filepath.Join(root, ".claude.ignore")
 	absPath, err := filepath.Abs(claudeignorePath)
@@ -148,6 +153,22 @@ func AllIgnoredPaths(root string) ([]string, error) {
 		}
 		paths = append(paths, subPaths...)
 	}
+
+	// Walk the filesystem to catch tracked files that match .claude.ignore
+	// patterns — git status --ignored does not list them.
+	if tracked, err := ManualDenyPaths(root); err == nil && len(tracked) > 0 {
+		seen := make(map[string]struct{}, len(paths))
+		for _, p := range paths {
+			seen[p] = struct{}{}
+		}
+		for _, p := range tracked {
+			if _, ok := seen[p]; !ok {
+				paths = append(paths, p)
+				seen[p] = struct{}{}
+			}
+		}
+	}
+
 	return paths, nil
 }
 

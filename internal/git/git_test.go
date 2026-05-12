@@ -1,6 +1,8 @@
 package git
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -75,5 +77,41 @@ func TestParseIgnoredOutput(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestAllIgnoredPaths_ClaudeIgnoreBlocksTrackedFile reproduces the bug where a
+// file listed in .claude.ignore is silently skipped if it is tracked by git.
+// .claude.ignore expresses "extra deny" intent: it must block matching files
+// regardless of their tracked state.
+func TestAllIgnoredPaths_ClaudeIgnoreBlocksTrackedFile(t *testing.T) {
+	root := setupGitRepo(t, "tracked-deny")
+
+	// Track a config file in git
+	if err := os.WriteFile(filepath.Join(root, "config.yml"), []byte("k: v\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run(t, root, "git", "add", "config.yml")
+	run(t, root, "git", "commit", "-m", "add config")
+
+	// User wants to block config.yml from Claude via .claude.ignore
+	if err := os.WriteFile(filepath.Join(root, ".claude.ignore"), []byte("config.yml\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := AllIgnoredPaths(root)
+	if err != nil {
+		t.Fatalf("AllIgnoredPaths: %v", err)
+	}
+
+	found := false
+	for _, p := range paths {
+		if p == "config.yml" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("config.yml is tracked AND listed in .claude.ignore — must appear in AllIgnoredPaths; got %v", paths)
 	}
 }
