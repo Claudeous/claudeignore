@@ -21,7 +21,10 @@ func AutoSync(root, mode string) (synced int, newFiles []string, err error) {
 			if err != nil {
 				return 0, nil, err
 			}
-			gitPaths, _ := git.GitIgnoredPaths(root)
+			gitPaths, err := git.GitIgnoredPaths(root)
+			if err != nil {
+				return 0, nil, err
+			}
 			gitSet := config.NewPathSet(gitPaths)
 			seen := config.NewPathSet(nil)
 

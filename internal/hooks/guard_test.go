@@ -497,7 +497,11 @@ func TestGuardGrep_DoubleStarGlobBypass(t *testing.T) {
 	// This is the core test for the security fix: a **/*.go glob should NOT
 	// silently allow when there are denied .go files that ripgrep would match.
 	root := t.TempDir()
-	root, _ = filepath.EvalSymlinks(root)
+	var err error
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	denyList := []string{"secrets/keys.go", ".env"}
 
@@ -509,7 +513,10 @@ func TestGuardGrep_DoubleStarGlobBypass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, _ := os.Getwd()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +569,11 @@ func TestGuardGrep_DoubleStarGlobNoExclusion(t *testing.T) {
 	// When **/*.txt doesn't match any denied files (no .txt in deny list)
 	// AND denied entries are outside the search scope, allow without injection.
 	root := t.TempDir()
-	root, _ = filepath.EvalSymlinks(root)
+	var err error
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Denied entries are in a completely different area
 	srcDir := filepath.Join(root, "src")
@@ -570,7 +581,10 @@ func TestGuardGrep_DoubleStarGlobNoExclusion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, _ := os.Getwd()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chdir(srcDir); err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +615,11 @@ func TestGuardGrep_DoubleStarGlobNoExclusion(t *testing.T) {
 func TestGuardGrep_DoubleStarGlobWithDeniedExtensionMatch(t *testing.T) {
 	// src/**/*.go with src/internal/secret.go denied should detect intersection
 	root := t.TempDir()
-	root, _ = filepath.EvalSymlinks(root)
+	var err error
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	denyList := []string{"src/internal/secret.go"}
 
@@ -612,7 +630,10 @@ func TestGuardGrep_DoubleStarGlobWithDeniedExtensionMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, _ := os.Getwd()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
