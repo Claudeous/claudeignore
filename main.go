@@ -58,6 +58,7 @@ func main() {
 	p := tea.NewProgram(m)
 	result, err := p.Run()
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 	final := result.(tui.MenuModel)
@@ -138,7 +139,9 @@ func runCommand(cmd string) error {
 	// chdir fails we fall back to the inherited cwd.
 	if cmd == "check" || cmd == "guard" {
 		if dir := os.Getenv("CLAUDE_PROJECT_DIR"); dir != "" {
-			_ = os.Chdir(dir)
+			if err := os.Chdir(dir); err != nil {
+				hooks.OutputHookMessage(fmt.Sprintf("claudeignore: unable to switch to CLAUDE_PROJECT_DIR %q: %v (continuing with current working directory)", dir, err))
+			}
 		}
 	}
 

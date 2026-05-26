@@ -31,7 +31,10 @@ func SyncWithMode(root string, mode string, dryRun bool) error {
 			if err != nil {
 				return err
 			}
-			gitPaths, _ := git.GitIgnoredPaths(root)
+			gitPaths, err := git.GitIgnoredPaths(root)
+			if err != nil {
+				return err
+			}
 			gitSet := config.NewPathSet(gitPaths)
 			seen := config.NewPathSet(nil)
 
