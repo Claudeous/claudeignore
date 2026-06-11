@@ -62,6 +62,31 @@ func TestParseIgnoredOutput(t *testing.T) {
 			input:    "!! my folder/secret file.txt\n",
 			expected: []string{"my folder/secret file.txt"},
 		},
+		{
+			name:     "OS noise files filtered",
+			input:    "!! .DS_Store\n!! Thumbs.db\n!! ehthumbs.db\n!! desktop.ini\n",
+			expected: nil,
+		},
+		{
+			name:     "OS noise files filtered in subdirectories",
+			input:    "!! docs/.DS_Store\n!! assets/img/Thumbs.db\n",
+			expected: nil,
+		},
+		{
+			name:     "AppleDouble resource forks filtered",
+			input:    "!! ._secret.txt\n!! docs/._notes.md\n",
+			expected: nil,
+		},
+		{
+			name:     "noise filtered but real paths kept",
+			input:    "!! .DS_Store\n!! .env\n!! docs/.DS_Store\n!! secret/\n",
+			expected: []string{".env", "secret"},
+		},
+		{
+			name:     "noise basename only matched, not directories containing it",
+			input:    "!! DS_Store-tools/config.env\n",
+			expected: []string{"DS_Store-tools/config.env"},
+		},
 	}
 
 	for _, tt := range tests {

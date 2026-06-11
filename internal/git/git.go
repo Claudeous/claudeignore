@@ -44,7 +44,28 @@ func HasGit(root string) bool {
 	return cmd.Run() == nil
 }
 
-// ParseIgnoredOutput extracts ignored paths from `git status --porcelain` output.
+// osNoiseFiles are OS-generated files that commonly match gitignore rules
+// (often via a global core.excludesFile) but never contain sensitive data.
+// They are filtered from ignored-path enumeration so they neither pollute the
+// deny list nor trigger false drift detection — e.g. Finder regenerating a
+// .DS_Store on every directory visit would otherwise re-fire the sync hook.
+var osNoiseFiles = map[string]bool{
+	".DS_Store":   true, // macOS Finder metadata
+	"Thumbs.db":   true, // Windows Explorer thumbnail cache
+	"ehthumbs.db": true, // Windows Explorer thumbnail cache (legacy)
+	"desktop.ini": true, // Windows folder settings
+}
+
+// isOSNoise reports whether path is an OS-generated file with no sensitive
+// content. Matches exact basenames plus the macOS AppleDouble resource-fork
+// prefix ("._*"), which is auto-generated on non-HFS volumes.
+func isOSNoise(path string) bool {
+	base := filepath.Base(path)
+	return osNoiseFiles[base] || strings.HasPrefix(base, "._")
+}
+
+// ParseIgnoredOutput extracts ignored paths from `git status --porcelain`
+// output, dropping OS-generated noise files (see isOSNoise).
 func ParseIgnoredOutput(out []byte) []string {
 	var paths []string
 	for _, line := range strings.Split(string(out), "\n") {
@@ -54,9 +75,10 @@ func ParseIgnoredOutput(out []byte) []string {
 		}
 		path := strings.TrimPrefix(line, "!! ")
 		path = strings.TrimSuffix(path, "/")
-		if path != "" {
-			paths = append(paths, path)
+		if path == "" || isOSNoise(path) {
+			continue
 		}
+		paths = append(paths, path)
 	}
 	return paths
 }
