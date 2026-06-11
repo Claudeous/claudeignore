@@ -19,7 +19,7 @@ import (
 	"github.com/claudeous/claudeignore/internal/tui"
 )
 
-var version = "0.0.4-alpha"
+var version = "0.1.1-alpha"
 
 var menuItems = []tui.MenuItem{
 	{Name: "init", Desc: "Interactive TUI to select what Claude can read"},
