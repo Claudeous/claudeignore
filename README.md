@@ -76,7 +76,21 @@ go install github.com/Claudeous/claudeignore@latest
 
 Requires Go 1.21+. The binary is placed in `$GOPATH/bin` (must be in your `PATH`).
 
-## Setup on a project
+## Getting started
+
+> **⚠️ Prerequisite — Claude Code's sandbox mode must be enabled.** The OS-level protection layer (`denyRead`) is enforced by Claude Code's sandbox. Without it, **Bash access is not blocked** (`cat .env` succeeds) — only the guard hook protects built-in tools (Read, Grep, etc.).
+
+**1. Enable the sandbox** in `~/.claude/settings.json` (or `.claude/settings.json` for the project):
+
+```jsonc
+{
+  "sandbox": {
+    "enabled": true
+  }
+}
+```
+
+**2. Set up the project:**
 
 ```bash
 claudeignore init     # Choose mode, configure, hooks auto-installed
@@ -84,6 +98,14 @@ claudeignore init     # Choose mode, configure, hooks auto-installed
 ```
 
 That's it — `init` runs `sync` and `install-hook` automatically.
+
+**3. Verify the protection:**
+
+```bash
+claudeignore status   # Should show synced state + hooks installed
+```
+
+Then ask Claude Code to `cat` a denied file (e.g. `.env`) — it should fail with permission denied. If it succeeds, the sandbox is not active: check `sandbox.enabled` and restart Claude Code.
 
 ## Commands
 
@@ -101,7 +123,7 @@ That's it — `init` runs `sync` and `install-hook` automatically.
 ## How it works
 
 1. `init` lets you choose a mode (gitignore or manual), then configures rules and installs hooks.
-2. `sync` computes the deny list based on the chosen mode, writes to `settings.local.json`.
+2. `sync` computes the deny list based on the chosen mode, writes to `settings.local.json` as sandbox `denyRead` rules — enforced only if Claude Code's sandbox mode is enabled (see [Getting started](#getting-started)).
 3. `guard` hook intercepts Read/Write/Edit/Grep/Glob and blocks access to denied paths.
 4. `check` hook alerts on every prompt if rules are out of sync or restart is needed.
 5. `install-hook` installs hooks in two scopes: **user** (`~/.claude/settings.json`, direct commands) and **project** (`.claude/settings.json`, safe wrapper with `which` check for teammates without the binary).
@@ -213,3 +235,4 @@ Your sponsorship helps maintain claudeignore, respond to issues, and build more 
 ## Requirements
 
 - `git`
+- Claude Code sandbox mode enabled (`sandbox.enabled: true`) — required for Bash-level protection, see [Getting started](#getting-started)
