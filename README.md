@@ -155,6 +155,14 @@ The sandbox `denyRead` list is loaded once when Claude Code starts. After `sync`
 
 The guard fails open by design: if it can't determine the repo root, read settings, or parse input, it allows the request. This prevents the tool from ever locking a user out due to a bug or misconfiguration.
 
+**Can I hand-edit `.claude/settings.local.json`?**
+
+Yes. `sync` only rewrites `sandbox.filesystem.denyRead` — everything else in the file is preserved, including your own network rules, `permissions`, `env`, and sibling keys under `sandbox` such as `allowWrite` or `enabled`. Key order and formatting are kept too, so a sync produces a minimal diff.
+
+The one exception is `denyRead` itself, which claudeignore owns and regenerates in full. To block extra paths, list them in `.claude.ignore` instead of editing `denyRead` by hand.
+
+If the file ever contains invalid JSON (a trailing comma, a truncated edit), claudeignore reports the problem and leaves the file untouched rather than overwriting your configuration.
+
 **How do I know if I'm protected?**
 
 Run `claudeignore status`. It shows the current mode, sync state, number of denied entries, and whether hooks are installed. If everything says "up to date" and hooks show "user + project", you're fully protected.

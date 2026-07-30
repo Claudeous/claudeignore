@@ -17,6 +17,7 @@ type CheckResult struct {
 	SyncedCount  int      // number of entries synced
 	NewFiles     []string // new files added by auto-sync
 	StateNewDeny []string // from previous sync (for restart message)
+	SyncError    string   // auto-sync was needed but could not be applied
 }
 
 // Check runs the UserPromptSubmit hook logic.
@@ -56,8 +57,13 @@ func Check(root string) (*CheckResult, error) {
 			result.NewFiles = newFiles
 			// After sync, we always need a restart for Bash sandbox protection
 			result.NeedsRestart = true
+		} else {
+			// Auto-sync fails open — the prompt still goes through — but the
+			// user must know their rules are not applied. A refused write
+			// (settings.local.json edited by hand into invalid JSON) would
+			// otherwise leave them silently unprotected.
+			result.SyncError = err.Error()
 		}
-		// If auto-sync fails, fall through silently (fail-open)
 	}
 
 	// Check if a previous sync still needs a restart
@@ -69,7 +75,7 @@ func Check(root string) (*CheckResult, error) {
 		}
 	}
 
-	if !result.AutoSynced && !result.NeedsRestart {
+	if !result.AutoSynced && !result.NeedsRestart && result.SyncError == "" {
 		return nil, nil
 	}
 
@@ -79,6 +85,13 @@ func Check(root string) (*CheckResult, error) {
 // FormatCheckMessage builds the user-facing alert message.
 func FormatCheckMessage(r *CheckResult) string {
 	var msg strings.Builder
+
+	if r.SyncError != "" {
+		msg.WriteString("\u26a0\ufe0f claudeignore: rules changed but could not be applied.\n\n")
+		msg.WriteString(r.SyncError)
+		msg.WriteString("\n\nProtection is running on the previous rules.")
+		return msg.String()
+	}
 
 	if r.AutoSynced {
 		msg.WriteString("\u2705 claudeignore: auto-synced ")
