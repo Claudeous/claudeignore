@@ -1,26 +1,32 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// Settings represents the Claude Code settings.local.json structure.
+// denyReadPath is the only key claudeignore owns in a settings file.
+// Everything else the file contains is user- or Claude-Code-owned and is
+// round tripped untouched.
+var denyReadPath = []string{"sandbox", "filesystem", "denyRead"}
+
+// Settings wraps a Claude Code settings JSON document. Reads and writes are
+// surgical: only the keys claudeignore manages are modified, and every other
+// key — including nested ones such as sandbox.network or
+// sandbox.filesystem.allowWrite — is preserved with its original order and
+// formatting.
 type Settings struct {
-	Sandbox *SandboxSettings       `json:"sandbox,omitempty"`
-	Hooks   map[string]interface{} `json:"hooks,omitempty"`
-	Extra   map[string]interface{} `json:"-"` // captures other top-level keys
+	obj *jsonObject
 }
 
-type SandboxSettings struct {
-	Filesystem *FilesystemSettings `json:"filesystem,omitempty"`
-}
-
-type FilesystemSettings struct {
-	DenyRead []string `json:"denyRead,omitempty"`
+// NewSettings returns an empty settings document.
+func NewSettings() *Settings {
+	return &Settings{obj: newJSONObject()}
 }
 
 // LoadSettings reads and parses a Claude Code settings JSON file.
@@ -32,102 +38,163 @@ func LoadSettings(path string) (*Settings, error) {
 	return ParseSettings(data)
 }
 
-// ParseSettings parses raw JSON into Settings, preserving unknown keys.
+// LoadOrCreateSettings reads a settings file, returning an empty document when
+// the file does not exist yet. A file that exists but cannot be read or parsed
+// is reported as an error: overwriting it would destroy the user's
+// configuration, so callers must refuse to write rather than start fresh.
+func LoadOrCreateSettings(path string) (*Settings, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return NewSettings(), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return NewSettings(), nil
+	}
+	o, err := parseJSONObject(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s contains invalid JSON (%w) — claudeignore will not overwrite it; fix the file, then run 'claudeignore sync'", path, err)
+	}
+	return &Settings{obj: o}, nil
+}
+
+// ParseSettings parses raw JSON into Settings, preserving every key.
 func ParseSettings(data []byte) (*Settings, error) {
-	// First, unmarshal into a raw map to capture all keys
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	o, err := parseJSONObject(data)
+	if err != nil {
 		return nil, fmt.Errorf("invalid settings JSON: %w", err)
 	}
-
-	s := &Settings{
-		Extra: make(map[string]interface{}),
-	}
-
-	// Parse known keys
-	if v, ok := raw["sandbox"]; ok {
-		s.Sandbox = &SandboxSettings{}
-		if err := json.Unmarshal(v, s.Sandbox); err != nil {
-			s.Sandbox = nil
-		}
-		delete(raw, "sandbox")
-	}
-	if v, ok := raw["hooks"]; ok {
-		if err := json.Unmarshal(v, &s.Hooks); err != nil {
-			s.Hooks = nil
-		}
-		delete(raw, "hooks")
-	}
-
-	// Preserve unknown keys
-	for k, v := range raw {
-		var val interface{}
-		if err := json.Unmarshal(v, &val); err != nil {
-			continue
-		}
-		s.Extra[k] = val
-	}
-
-	return s, nil
+	return &Settings{obj: o}, nil
 }
 
-// MarshalJSON produces JSON that includes both known and extra keys.
+// MarshalJSON produces compact JSON with keys in their original order.
 func (s *Settings) MarshalJSON() ([]byte, error) {
-	m := make(map[string]interface{})
-
-	// Copy extra keys first
-	for k, v := range s.Extra {
-		m[k] = v
+	if s == nil {
+		return []byte("{}"), nil
 	}
-
-	// Known keys override
-	if s.Sandbox != nil {
-		m["sandbox"] = s.Sandbox
-	}
-	if s.Hooks != nil {
-		m["hooks"] = s.Hooks
-	}
-
-	return json.MarshalIndent(m, "", "  ")
+	return s.obj.MarshalJSON()
 }
 
-// GetDenyList extracts the denyRead list from settings.
+// Get returns the decoded value of a top-level key.
+func (s *Settings) Get(key string) (interface{}, bool) {
+	if s == nil || s.obj == nil {
+		return nil, false
+	}
+	raw, ok := s.obj.get(key)
+	if !ok {
+		return nil, false
+	}
+	var v interface{}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// Set writes a top-level key, leaving the position of the other keys intact.
+func (s *Settings) Set(key string, value interface{}) error {
+	return s.SetPath(value, key)
+}
+
+// SetPath writes a value at a nested key path, creating intermediate objects as
+// needed and preserving sibling keys at every level.
+func (s *Settings) SetPath(value interface{}, keys ...string) error {
+	if s.obj == nil {
+		s.obj = newJSONObject()
+	}
+	raw, err := encodeJSON(value)
+	if err != nil {
+		return err
+	}
+	return s.obj.setPath(raw, keys...)
+}
+
+// GetDenyList extracts the sandbox.filesystem.denyRead list from settings.
 func (s *Settings) GetDenyList() []string {
-	if s == nil || s.Sandbox == nil || s.Sandbox.Filesystem == nil {
+	if s == nil || s.obj == nil {
 		return nil
 	}
-	return s.Sandbox.Filesystem.DenyRead
+	raw, ok := s.obj.getPath(denyReadPath...)
+	if !ok {
+		return nil
+	}
+	var deny []string
+	if err := json.Unmarshal(raw, &deny); err != nil {
+		return nil
+	}
+	return deny
 }
 
-// SetDenyList updates the denyRead list in settings.
-func (s *Settings) SetDenyList(deny []string) {
-	if s.Sandbox == nil {
-		s.Sandbox = &SandboxSettings{}
+// SetDenyList replaces the sandbox.filesystem.denyRead list. Sibling keys under
+// sandbox and sandbox.filesystem are left alone.
+func (s *Settings) SetDenyList(deny []string) error {
+	if deny == nil {
+		deny = []string{}
 	}
-	if s.Sandbox.Filesystem == nil {
-		s.Sandbox.Filesystem = &FilesystemSettings{}
-	}
-	s.Sandbox.Filesystem.DenyRead = deny
+	return s.SetPath(deny, denyReadPath...)
 }
 
-// SaveSettings writes settings to a file, preserving unknown keys.
+// SaveSettings writes settings to a file, preserving every key it did not
+// manage. The write is atomic so an interrupted run cannot truncate the file.
 func SaveSettings(path string, s *Settings) error {
 	out, err := s.MarshalJSON()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0600)
+	pretty, err := formatJSON(out)
+	if err != nil {
+		return err
+	}
+	return WriteFileAtomic(path, append(pretty, '\n'), 0600)
 }
 
-// UpdateSettingsFile reads a settings file, updates denyRead, and writes it back.
+// UpdateSettingsFile reads a settings file, updates denyRead, and writes it
+// back. Any other setting present in the file is preserved; an unparseable file
+// is reported rather than overwritten.
 func UpdateSettingsFile(settingsPath string, deny []string) error {
-	s, err := LoadSettings(settingsPath)
+	s, err := LoadOrCreateSettings(settingsPath)
 	if err != nil {
-		// File doesn't exist or is invalid — start fresh
-		s = &Settings{Extra: make(map[string]interface{})}
+		return err
 	}
-	s.SetDenyList(deny)
+	if err := s.SetDenyList(deny); err != nil {
+		return err
+	}
 	return SaveSettings(settingsPath, s)
+}
+
+// WriteFileAtomic writes data to a temporary file in the target directory and
+// renames it into place, so readers never observe a half-written file. The
+// permissions of an existing file are kept.
+//
+// When the directory does not allow creating the temporary file but the target
+// itself is writable, it falls back to a direct write: losing atomicity beats
+// refusing to sync at all.
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".claudeignore-*.tmp")
+	if err != nil {
+		return os.WriteFile(path, data, perm) //nolint:gosec // perm mirrors the existing file, or the caller's default
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // --- File helpers ---

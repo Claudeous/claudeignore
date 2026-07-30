@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/claudeous/claudeignore/internal/config"
 )
 
 // UserHooksConfig returns the hook configuration for user-scope settings.
@@ -82,29 +84,25 @@ func ProjectHooksConfig() map[string]interface{} {
 }
 
 // InstallHooksToFile writes hook configuration to a settings file, merging
-// claudeignore hooks with any existing hooks from other tools.
+// claudeignore hooks with any existing hooks from other tools. Every other
+// setting in the file is preserved; a file that cannot be parsed is reported
+// rather than overwritten.
 func InstallHooksToFile(path string, hooks map[string]interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return fmt.Errorf("cannot create directory for %s: %w", path, err)
 	}
 
-	var settings map[string]interface{}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		settings = make(map[string]interface{})
-	} else {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			settings = make(map[string]interface{})
-		}
-	}
-
-	settings["hooks"] = mergeHooks(settings["hooks"], hooks)
-
-	out, err := json.MarshalIndent(settings, "", "  ")
+	settings, err := config.LoadOrCreateSettings(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0600)
+
+	existing, _ := settings.Get("hooks")
+	if err := settings.Set("hooks", mergeHooks(existing, hooks)); err != nil {
+		return err
+	}
+
+	return config.SaveSettings(path, settings)
 }
 
 // mergeHooks merges claudeignore hooks into existing hooks, preserving
@@ -226,38 +224,35 @@ func WriteInitSbxScript(root string) error {
 	return nil
 }
 
-// InstallSandboxSettings merges sandbox settings into a settings file, preserving other keys.
+// InstallSandboxSettings merges sandbox settings into a settings file,
+// preserving other keys — including sibling keys under sandbox such as
+// network rules or filesystem.denyRead.
 func InstallSandboxSettings(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return fmt.Errorf("cannot create directory for %s: %w", path, err)
 	}
 
-	var settings map[string]interface{}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		settings = make(map[string]interface{})
-	} else {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			settings = make(map[string]interface{})
-		}
-	}
-
-	settings["defaultMode"] = "bypassPermissions"
-	settings["skipDangerousModePermissionPrompt"] = true
-
-	sandbox, ok := settings["sandbox"].(map[string]interface{})
-	if !ok {
-		sandbox = make(map[string]interface{})
-	}
-	sandbox["enabled"] = true
-	sandbox["autoAllowBashIfSandboxed"] = true
-	settings["sandbox"] = sandbox
-
-	out, err := json.MarshalIndent(settings, "", "  ")
+	settings, err := config.LoadOrCreateSettings(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0600)
+
+	updates := []struct {
+		value interface{}
+		path  []string
+	}{
+		{"bypassPermissions", []string{"defaultMode"}},
+		{true, []string{"skipDangerousModePermissionPrompt"}},
+		{true, []string{"sandbox", "enabled"}},
+		{true, []string{"sandbox", "autoAllowBashIfSandboxed"}},
+	}
+	for _, u := range updates {
+		if err := settings.SetPath(u.value, u.path...); err != nil {
+			return err
+		}
+	}
+
+	return config.SaveSettings(path, settings)
 }
 
 // OutputHookMessage prints a JSON hook message to stdout.

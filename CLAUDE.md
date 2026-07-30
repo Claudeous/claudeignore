@@ -32,7 +32,8 @@ git tag v0.x.x && git push origin v0.x.x   # triggers GoReleaser via GitHub Acti
 main.go                     # Entry point, CLI routing
 internal/
   git/git.go                # Git helpers (repoRoot, ignored paths)
-  config/config.go          # Settings types, file helpers, path sets
+  config/config.go          # Settings read/write, file helpers, path sets
+  config/jsonobj.go         # Order-preserving JSON object (lossless settings round trip)
   config/state.go           # State persistence, hash computation
   hooks/guard.go            # PreToolUse hook (path blocking)
   hooks/check.go            # UserPromptSubmit hook (sync detection)
@@ -86,6 +87,8 @@ Hooks are installed in two places:
 
 ## Gotchas
 
+- **Settings writes are surgical**: `sync` owns exactly one key, `sandbox.filesystem.denyRead`. All settings files go through `config.LoadOrCreateSettings` → `config.SaveSettings`, which round trips the document as raw JSON (`internal/config/jsonobj.go`), preserving unknown keys, nested siblings (`sandbox.network`, `filesystem.allowWrite`) and key order. Never marshal a settings file from a typed struct — that is what silently deleted user config before.
+- **Invalid settings JSON is never overwritten**: `LoadOrCreateSettings` returns an error when the file exists but doesn't parse. `sync` fails with a message; the `check` hook still fails open but surfaces `CheckResult.SyncError` so the user knows their rules aren't applied.
 - **Guard fails open**: any error in `guard` (bad JSON, missing settings, no repo root) exits 0 (allow). This is intentional — never block the user on tool errors.
 - **Guard reads stdin**: when testing `guard` manually, pipe hook JSON via stdin: `echo '{"tool_name":"Read","tool_input":{"file_path":".env"}}' | go run . guard`
 - **Restart required after sync**: sandbox `denyRead` is loaded at Claude Code startup. After `sync`, the `check` hook will remind to restart until the process is newer than the sync timestamp.

@@ -58,23 +58,124 @@ func TestInstallHooksToFile(t *testing.T) {
 		}
 	})
 
-	t.Run("overwrites invalid JSON gracefully", func(t *testing.T) {
+	t.Run("refuses to overwrite invalid JSON", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "bad.json")
-		if err := os.WriteFile(path, []byte(`not valid json`), 0600); err != nil {
+		original := `{"permissions": {"allow": ["Read"]},}` // trailing comma
+		if err := os.WriteFile(path, []byte(original), 0600); err != nil {
 			t.Fatal(err)
 		}
 
 		err := InstallHooksToFile(path, UserHooksConfig())
-		if err != nil {
+		if err == nil {
+			t.Fatal("expected an error for an unparseable settings file")
+		}
+
+		// The user's file must be left exactly as it was
+		data, _ := os.ReadFile(path)
+		if string(data) != original {
+			t.Errorf("file was modified:\n%s", data)
+		}
+	})
+
+	t.Run("preserves sandbox settings written by the user", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings.json")
+		input := `{
+  "sandbox": {
+    "network": {"allowUnixSockets": ["/var/run/docker.sock"]},
+    "filesystem": {"denyRead": [".env"]}
+  }
+}`
+		if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := InstallHooksToFile(path, UserHooksConfig()); err != nil {
 			t.Fatalf("InstallHooksToFile error: %v", err)
 		}
 
-		// Should have created valid JSON
 		data, _ := os.ReadFile(path)
 		var m map[string]interface{}
 		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("output should be valid JSON: %v", err)
+			t.Fatal(err)
+		}
+		sandbox, ok := m["sandbox"].(map[string]interface{})
+		if !ok {
+			t.Fatal("sandbox key was dropped")
+		}
+		if sandbox["network"] == nil {
+			t.Error("sandbox.network was dropped")
+		}
+		if sandbox["filesystem"] == nil {
+			t.Error("sandbox.filesystem was dropped")
+		}
+	})
+}
+
+func TestInstallSandboxSettings(t *testing.T) {
+	t.Run("preserves sibling sandbox keys", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings.json")
+		input := `{
+  "env": {"FOO": "bar"},
+  "sandbox": {
+    "network": {"allow": [{"host": "example.com"}]},
+    "filesystem": {"denyRead": [".env"], "allowWrite": ["/tmp/x"]}
+  }
+}`
+		if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := InstallSandboxSettings(path); err != nil {
+			t.Fatalf("InstallSandboxSettings error: %v", err)
+		}
+
+		data, _ := os.ReadFile(path)
+		var m map[string]interface{}
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		if m["env"] == nil {
+			t.Error("env key was dropped")
+		}
+		sandbox, ok := m["sandbox"].(map[string]interface{})
+		if !ok {
+			t.Fatal("sandbox key was dropped")
+		}
+		if sandbox["network"] == nil {
+			t.Error("sandbox.network was dropped")
+		}
+		if sandbox["enabled"] != true || sandbox["autoAllowBashIfSandboxed"] != true {
+			t.Errorf("sandbox flags not applied: %v", sandbox)
+		}
+		fs, ok := sandbox["filesystem"].(map[string]interface{})
+		if !ok {
+			t.Fatal("sandbox.filesystem was dropped")
+		}
+		if fs["allowWrite"] == nil {
+			t.Error("sandbox.filesystem.allowWrite was dropped")
+		}
+		if m["defaultMode"] != "bypassPermissions" {
+			t.Errorf("defaultMode = %v, want bypassPermissions", m["defaultMode"])
+		}
+	})
+
+	t.Run("refuses to overwrite invalid JSON", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "bad.json")
+		original := `{"sandbox": }`
+		if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := InstallSandboxSettings(path); err == nil {
+			t.Fatal("expected an error for an unparseable settings file")
+		}
+		data, _ := os.ReadFile(path)
+		if string(data) != original {
+			t.Errorf("file was modified:\n%s", data)
 		}
 	})
 }

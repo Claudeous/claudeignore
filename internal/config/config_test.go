@@ -201,7 +201,7 @@ func TestSettings_ParseAndMarshal(t *testing.T) {
 		}
 
 		// Verify extra keys preserved
-		if _, ok := s.Extra["someOtherKey"]; !ok {
+		if v, ok := s.Get("someOtherKey"); !ok || v != "preserved" {
 			t.Error("extra key 'someOtherKey' was not preserved")
 		}
 	})
@@ -217,8 +217,10 @@ func TestSettings_ParseAndMarshal(t *testing.T) {
 	})
 
 	t.Run("set deny list on empty settings", func(t *testing.T) {
-		s := &Settings{Extra: make(map[string]interface{})}
-		s.SetDenyList([]string{".env", "dist"})
+		s := NewSettings()
+		if err := s.SetDenyList([]string{".env", "dist"}); err != nil {
+			t.Fatalf("SetDenyList error: %v", err)
+		}
 		deny := s.GetDenyList()
 		if len(deny) != 2 {
 			t.Fatalf("expected 2 items, got %d", len(deny))
